@@ -11,9 +11,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 # Define the Backbone network (SageConv)
-class SageConvBackbone(nn.Module):
+class ConvBackbone(nn.Module):
     def __init__(self):
-        super(SageConvBackbone, self).__init__()
+        super(ConvBackbone, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
         self.fc = nn.Linear(128 * 32 * 32, 256)
@@ -194,7 +194,7 @@ def main():
     test_dataloader = DataLoader(combined_test_dataset, batch_size=64, shuffle=False, num_workers=2)
 
     # Initialize the models and optimizers
-    backbone = SageConvBackbone().to(device)
+    backbone = ConvBackbone().to(device)
     domain_discriminator = DomainDiscriminator().to(device)
     label_classifier = LabelClassifier().to(device)
 
