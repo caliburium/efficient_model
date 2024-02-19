@@ -35,7 +35,7 @@ def main():
     # Initialize Weights and Biases
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
-               name="Controlgroup_Conv2D_MNIST")
+               name="Controlgroup_Conv2D_FMNIST")
 
     transform = transforms.Compose([
         transforms.Pad(2),
