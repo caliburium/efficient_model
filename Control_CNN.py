@@ -34,7 +34,7 @@ class SimpleCNN(nn.Module):
 
 def main():
     args = argparse.ArgumentParser()
-    args.add_argument('--mode', type=str, default='combine')
+    args.add_argument('--mode', type=str, default='mnist')
     args.add_argument('--channel', type=int, default=64)
     args.add_argument('--linear', type=int, default=40)
     args = args.parse_args()
