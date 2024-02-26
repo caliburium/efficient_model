@@ -12,23 +12,21 @@ import argparse
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class SimpleCNN(nn.Module):
-    def __init__(self, channel, linear):
-        super(SimpleCNN, self).__init__()
+class SimplerCNN(nn.Module):
+    def __init__(self, channel):
+        super(SimplerCNN, self).__init__()
         self.conv1 = nn.Conv2d(3, channel//2, 3, padding=1)
         self.bn1 = nn.BatchNorm2d(channel//2)
         self.conv2 = nn.Conv2d(channel//2, channel, 3, padding=1)
         self.bn2 = nn.BatchNorm2d(channel)
-        self.fc1 = nn.Linear(channel * 16 * 16, linear)
-        self.fc2 = nn.Linear(linear, 10)
+        self.fc1 = nn.Linear(channel * 16 * 16, 10)
 
     def forward(self, x, channel):
         x = self.bn1(F.relu(self.conv1(x)))
         x = self.bn2(F.relu(self.conv2(x)))
         x = F.max_pool2d(x, 2)
         x = x.view(-1, channel * 16 * 16)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = F.softmax(self.fc1(x), dim=1)
         return x
 
 
@@ -36,14 +34,14 @@ def main():
     args = argparse.ArgumentParser()
     args.add_argument('--mode', type=str, default='combine')
     args.add_argument('--channel', type=int, default=64)
-    args.add_argument('--linear', type=int, default=40)
+    # args.add_argument('--linear', type=int, default=40)
     args = args.parse_args()
 
     # Initialize Weights and Biases
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="Controlgroup_Conv2D_" + args.mode + "_" + str(args.channel) + "/" + str(args.linear))
+               name="Controlgroup_simplerConv2D_" + args.mode + "_" + str(args.channel) )
 
     transform_MNIST = transforms.Compose([
         transforms.Pad(2),
@@ -114,7 +112,7 @@ def main():
 
     print("data load complete, start training")
 
-    net = SimpleCNN(int(args.channel), int(args.linear)).to(device)
+    net = SimplerCNN(int(args.channel)).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
