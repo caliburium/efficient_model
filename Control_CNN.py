@@ -43,7 +43,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="Controlgroup_Conv2D_" + args.mode + "_" + str(args.channel) + "/" + str(args.linear))
+               name="[Control] Conv2D_" + args.mode + "_" + str(args.channel) + "/" + str(args.linear))
 
     transform_MNIST = transforms.Compose([
         transforms.Pad(2),

@@ -41,7 +41,8 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="Controlgroup_simplerConv2D_" + args.mode + "_" + str(args.channel) )
+               name="[Control] simplerConv2D_" + args.mode + "_" + str(args.channel)
+               )
 
     transform_MNIST = transforms.Compose([
         transforms.Pad(2),
@@ -163,7 +164,7 @@ def main():
                 tester(testloader, "svhn")
             elif args.mode == 'cifar10':
                 tester(testloader, "cifar10")
-            elif args.mode == 'mnist':
+            elif args.mode == 'fmnist':
                 tester(testloader, "fmnist")
 
     wandb.finish()
