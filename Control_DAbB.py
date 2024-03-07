@@ -67,7 +67,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="[Control] DAbB_S:MNIST_T:SVHN"
+               name="[Control] DAbB_S:" + args.source + "_T:" + args.target
                # name="[Control] DAbB_" + str(args.epoch) + "_dom:" + str(args.domain_lr) + "_lab:" + str(args.label_lr)
                )
 
@@ -89,10 +89,31 @@ def main():
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
-    source_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform_mnist)
-    source_dataset_test = datasets.MNIST(root='./data', train=False, download=True, transform=transform_mnist)
-    target_dataset = datasets.SVHN(root='./data', split='train', download=True, transform=transform)
-    target_dataset_test = datasets.SVHN(root='./data', split='test', download=True, transform=transform)
+    # https://pytorch.org/vision/main/generated/torchvision.datasets.EMNIST.html
+
+    if args.source == 'MNIST':
+        source_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform_mnist)
+        source_dataset_test = datasets.MNIST(root='./data', train=False, download=True, transform=transform_mnist)
+    elif args.source == 'EMNIST':
+        source_dataset = datasets.EMNIST(root='./data', split='digits', train=True, download=True, transform=transform_emnist)
+        source_dataset_test = datasets.EMNIST(root='./data', split='digits', train=False, download=True, transform=transform_emnist)
+    elif args.source == 'SVHN':
+        source_dataset = datasets.SVHN(root='./data', split='train', download=True, transform=transform)
+        source_dataset_test = datasets.SVHN(root='./data', split='test', download=True, transform=transform)
+    else:
+        print("no source")
+
+    if args.target == 'MNIST':
+        target_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform_mnist)
+        target_dataset_test = datasets.MNIST(root='./data', train=False, download=True, transform=transform_mnist)
+    elif args.target == 'EMNIST':
+        target_dataset = datasets.EMNIST(root='./data', split='digits', train=True, download=True, transform=transform_emnist)
+        target_dataset_test = datasets.EMNIST(root='./data', split='digits', train=False, download=True, transform=transform_emnist)
+    elif args.target == 'SVHN':
+        target_dataset = datasets.SVHN(root='./data', split='train', download=True, transform=transform)
+        target_dataset_test = datasets.SVHN(root='./data', split='test', download=True, transform=transform)
+    else:
+        print("no target")
 
     source_loader = DataLoader(source_dataset, batch_size=64, shuffle=True, num_workers=4)
     source_loader_test = DataLoader(source_dataset_test, batch_size=64, shuffle=True, num_workers=4)
