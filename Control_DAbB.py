@@ -55,6 +55,8 @@ class LabelClassifier(nn.Module):
 def main():
     args = argparse.ArgumentParser()
     args.add_argument('--epoch', type=int, default=100)
+    args.add_argument('--source', type=str, default='EMNIST')
+    args.add_argument('--target', type=str, default='SVHN')
     args.add_argument('--domain_lr', type=float, default=0.001)
     args.add_argument('--label_lr', type=float, default=0.001)
     args = args.parse_args()
@@ -81,14 +83,20 @@ def main():
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
-    source_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform_mnist)
-    source_loader = DataLoader(source_dataset, batch_size=64, shuffle=True, num_workers=4)
-    source_dataset_test = datasets.MNIST(root='./data', train=False, download=True, transform=transform_mnist)
-    source_loader_test = DataLoader(source_dataset_test, batch_size=64, shuffle=True, num_workers=4)
+    transform_emnist = transforms.Compose([
+        transforms.Pad(2),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
 
+    source_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform_mnist)
+    source_dataset_test = datasets.MNIST(root='./data', train=False, download=True, transform=transform_mnist)
     target_dataset = datasets.SVHN(root='./data', split='train', download=True, transform=transform)
-    target_loader = DataLoader(target_dataset, batch_size=64, shuffle=True, num_workers=4)
     target_dataset_test = datasets.SVHN(root='./data', split='test', download=True, transform=transform)
+
+    source_loader = DataLoader(source_dataset, batch_size=64, shuffle=True, num_workers=4)
+    source_loader_test = DataLoader(source_dataset_test, batch_size=64, shuffle=True, num_workers=4)
+    target_loader = DataLoader(target_dataset, batch_size=64, shuffle=True, num_workers=4)
     target_loader_test = DataLoader(target_dataset_test, batch_size=64, shuffle=True, num_workers=4)
 
     print("data load complete, start training")
