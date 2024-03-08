@@ -84,25 +84,26 @@ def main():
         fmnistloader = DataLoader(fmnist_test_dataset, batch_size=64, shuffle=False, num_workers=2)
         testloader = DataLoader(combined_test_dataset, batch_size=64, shuffle=True, num_workers=2)
 
-    elif args.mode == 'mnist':
+    elif args.mode == 'mnist':  # 28x28
         mnist_dataset = MNIST(root='./data', train=True, download=True, transform=transform_MNIST)
         mnist_test_dataset = MNIST(root='./data', train=False, download=True, transform=transform_MNIST)
         trainloader = DataLoader(mnist_dataset, batch_size=64, shuffle=True, num_workers=2)
         testloader = DataLoader(mnist_test_dataset, batch_size=64, shuffle=False, num_workers=2)
 
-    elif args.mode == 'svhn':
+    elif args.mode == 'svhn':  # 32x32
         svhn_dataset = SVHN(root='./data', split='train', download=True, transform=transform)
         svhn_test_dataset = SVHN(root='./data', split='test', download=True, transform=transform)
         trainloader = DataLoader(svhn_dataset, batch_size=64, shuffle=True, num_workers=2)
         testloader = DataLoader(svhn_test_dataset, batch_size=64, shuffle=False, num_workers=2)
 
-    elif args.mode == 'cifar10':
+    # 1.Airplane 2.Automobile 3.Bird 4.Cat 5.Deer 6.Dog 7.Frog 8.Horse 9.Ship 10.Truck
+    elif args.mode == 'cifar10':  # 32x32
         cifar10_dataset = CIFAR10(root='./data', train=True, download=True, transform=transform)
         cifar10_test_dataset = CIFAR10(root='./data', train=False, download=True, transform=transform)
         trainloader = DataLoader(cifar10_dataset, batch_size=64, shuffle=True, num_workers=2)
         testloader = DataLoader(cifar10_test_dataset, batch_size=64, shuffle=False, num_workers=2)
 
-    elif args.mode == 'fmnist':
+    elif args.mode == 'fmnist':  # 28x28
         fashionmnist_dataset = FashionMNIST(root='./data', train=True, download=True, transform=transform_MNIST)
         fmnist_test_dataset = FashionMNIST(root='./data', train=False, download=True, transform=transform_MNIST)
         trainloader = DataLoader(fashionmnist_dataset, batch_size=64, shuffle=True, num_workers=2)
