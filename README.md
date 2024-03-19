@@ -1,0 +1,1 @@
+Imagenette requires Pytorch 2.2.1
