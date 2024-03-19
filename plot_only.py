@@ -9,7 +9,7 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 def main():
     transform_blur = transforms.Compose([
         transforms.Resize((96, 96), interpolation=InterpolationMode.NEAREST),
-        transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0)),
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.5, 2.5)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
@@ -32,7 +32,7 @@ def main():
     plot_images(cifar10_dataset, "CIFAR-10 Dataset")
 
 
-def plot_images(dataset, dataset_name, num_images=4):
+def plot_images(dataset, dataset_name, num_images=6):
     plt.figure(figsize=(20, 4))
     plt.suptitle(dataset_name)
     for i in range(num_images):
