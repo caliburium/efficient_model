@@ -63,7 +63,7 @@ def main():
         cifar10_dataset = CIFAR10(root='./data', train=True, download=True, transform=transform)
 
         # Load MNIST, SVHN, CIFAR10, and FashionMNIST datasets for testing/validation
-        imagenette_test_dataset = Imagenette(root='./data', split='test', download=True, transform=transform)
+        imagenette_test_dataset = Imagenette(root='./data', split='val', download=True, transform=transform)
         stl10_test_dataset = STL10(root='./data', split='test', download=True, transform=transform)
         svhn_test_dataset = SVHN(root='./data', split='test', download=True, transform=transform)
         cifar10_test_dataset = CIFAR10(root='./data', train=False, download=True, transform=transform)
