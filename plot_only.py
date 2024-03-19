@@ -9,7 +9,7 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 def main():
     transform_blur = transforms.Compose([
         transforms.Resize((96, 96), interpolation=InterpolationMode.NEAREST),
-        transforms.GaussianBlur(kernel_size=3, sigma=(0.5, 2.5)),
+        transforms.GaussianBlur(kernel_size=5, sigma=(3.0, 6.0)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
