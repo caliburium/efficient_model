@@ -55,7 +55,7 @@ class LabelClassifier(nn.Module):
 def main():
     args = argparse.ArgumentParser()
     args.add_argument('--epoch', type=int, default=100)
-    args.add_argument('--source', type=str, default='EMNIST')
+    args.add_argument('--source', type=str, default='MNIST')
     args.add_argument('--target', type=str, default='SVHN')
     args.add_argument('--domain_lr', type=float, default=0.001)
     args.add_argument('--label_lr', type=float, default=0.001)
@@ -147,13 +147,19 @@ def main():
             source_images, source_labels = source_data
             target_images, _ = target_data
 
+            # 소스 도메인과 타겟 도메인 데이터 결합
+            combined_images = torch.cat((source_images, target_images), dim=0)
+            combined_labels = torch.cat((torch.ones(source_images.size(0)), torch.zeros(target_images.size(0))), dim=0)
+            combined_images, combined_labels = combined_images.to(device), combined_labels.to(device)
+
+
             source_images, source_labels = source_images.to(device), source_labels.to(device)
             target_images = target_images.to(device)
 
             # Source domain에 대한 손실 계산
             source_features = feature_extractor(source_images)
             source_preds_domain = domain_classifier(source_features)
-            source_labels_domain = torch.ones(source_preds_domain.size(0), 1).to(device)
+            source_labels_domain = torch.full((source_preds_domain.size(0), 1), 1, dtype=torch.float, device=device)
             source_loss_domain = criterion(source_preds_domain, source_labels_domain)
 
             source_preds_label = label_classifier(source_features)
@@ -162,7 +168,7 @@ def main():
             # Target domain에 대한 손실 계산
             target_features = feature_extractor(target_images)
             target_preds_domain = domain_classifier(target_features)
-            target_labels_domain = torch.zeros(target_preds_domain.size(0), 1).to(device)
+            target_labels_domain = torch.full((target_preds_domain.size(0), 1), 0, dtype=torch.float, device=device)
             target_loss_domain = criterion(target_preds_domain, target_labels_domain)
 
             # 총 손실 계산 및 역전파

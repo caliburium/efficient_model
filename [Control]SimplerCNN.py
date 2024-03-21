@@ -37,6 +37,7 @@ def main():
     args.add_argument('--channel', type=int, default=64)
     # args.add_argument('--linear', type=int, default=40)
     args = args.parse_args()
+    batch_size = 64
 
     # Initialize Weights and Biases
     wandb.init(project="Efficient_Model_Research",
@@ -70,7 +71,7 @@ def main():
         cifar10_dataset = CIFAR10(root='./data', train=True, download=True, transform=transform)
 
         # Load MNIST, SVHN, CIFAR10, and FashionMNIST datasets for testing/validation
-        imagenette_test_dataset = Imagenette(root='./data', split='val', download=True, transform=transform_blur)
+        imagenette_test_dataset = Imagenette(root='./data', split='val', download=False, transform=transform_blur)
         stl10_test_dataset = STL10(root='./data', split='test', download=True, transform=transform_blur)
         svhn_test_dataset = SVHN(root='./data', split='test', download=True, transform=transform)
         cifar10_test_dataset = CIFAR10(root='./data', train=False, download=True, transform=transform)
@@ -83,36 +84,36 @@ def main():
             [imagenette_test_dataset, svhn_test_dataset, cifar10_test_dataset, stl10_test_dataset])
 
         # Create DataLoader
-        trainloader = DataLoader(combined_dataset, batch_size=64, shuffle=True, num_workers=2)
-        svhnloader = DataLoader(svhn_test_dataset, batch_size=64, shuffle=False, num_workers=2)
-        cifar10loader = DataLoader(cifar10_test_dataset, batch_size=64, shuffle=False, num_workers=2)
-        imagenetteloader = DataLoader(imagenette_test_dataset, batch_size=64, shuffle=False, num_workers=2)
-        stl10loader = DataLoader(stl10_test_dataset, batch_size=64, shuffle=False, num_workers=2)
-        testloader = DataLoader(combined_test_dataset, batch_size=64, shuffle=True, num_workers=2)
+        trainloader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        svhnloader = DataLoader(svhn_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        cifar10loader = DataLoader(cifar10_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        imagenetteloader = DataLoader(imagenette_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        stl10loader = DataLoader(stl10_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        testloader = DataLoader(combined_test_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     elif args.mode == 'imagenette':
         imagenette_dataset = Imagenette(root='./data', split='train', download=False, transform=transform_blur)
         imagenette_test_dataset = Imagenette(root='./data', split='test', download=False, transform=transform_blur)
-        trainloader = DataLoader(imagenette_dataset, batch_size=64, shuffle=True, num_workers=2)
-        testloader = DataLoader(imagenette_test_dataset, batch_size=64, shuffle=False, num_workers=2)
+        trainloader = DataLoader(imagenette_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        testloader = DataLoader(imagenette_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
     elif args.mode == 'stl10':
         stl10_dataset = STL10(root='./data', split='train', download=True, transform=transform_blur)
         stl10_test_dataset = STL10(root='./data', split='test', download=True, transform=transform_blur)
-        trainloader = DataLoader(stl10_dataset, batch_size=64, shuffle=True, num_workers=2)
-        testloader = DataLoader(stl10_test_dataset, batch_size=64, shuffle=False, num_workers=2)
+        trainloader = DataLoader(stl10_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        testloader = DataLoader(stl10_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
     elif args.mode == 'svhn':
         svhn_dataset = SVHN(root='./data', split='train', download=True, transform=transform)
         svhn_test_dataset = SVHN(root='./data', split='test', download=True, transform=transform)
-        trainloader = DataLoader(svhn_dataset, batch_size=64, shuffle=True, num_workers=2)
-        testloader = DataLoader(svhn_test_dataset, batch_size=64, shuffle=False, num_workers=2)
+        trainloader = DataLoader(svhn_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        testloader = DataLoader(svhn_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
     elif args.mode == 'cifar10':
         cifar10_dataset = CIFAR10(root='./data', train=True, download=True, transform=transform)
         cifar10_test_dataset = CIFAR10(root='./data', train=False, download=True, transform=transform)
-        trainloader = DataLoader(cifar10_dataset, batch_size=64, shuffle=True, num_workers=2)
-        testloader = DataLoader(cifar10_test_dataset, batch_size=64, shuffle=False, num_workers=2)
+        trainloader = DataLoader(cifar10_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        testloader = DataLoader(cifar10_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
     else:
         print("mode error")
