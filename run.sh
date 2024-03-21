@@ -4,6 +4,9 @@
 
 # python Control_CNN.py --mode combine --channel 64 --linear 20
 
-python Control_simplerCNN.py --mode fmnist --channel 60
-python Control_simplerCNN.py --mode fmnist --channel 40
-python Control_simplerCNN.py --mode fmnist --channel 20
+python [Control]SimplerCNN.py --mode imagenette --channel 64
+python [Control]SimplerCNN.py --mode stl10 --channel 64
+python [Control]SimplerCNN.py --mode svhn --channel 64
+python [Control]SimplerCNN.py --mode cifar10 --channel 64
+python [Control]SimplerCNN.py --mode combine --channel 64
+
