@@ -13,6 +13,7 @@ import argparse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 class SimplerCNN(nn.Module):
     def __init__(self, channel):
         super(SimplerCNN, self).__init__()
@@ -20,13 +21,13 @@ class SimplerCNN(nn.Module):
         self.bn1 = nn.BatchNorm2d(channel//2)
         self.conv2 = nn.Conv2d(channel//2, channel, 3, padding=1)
         self.bn2 = nn.BatchNorm2d(channel)
-        self.fc1 = nn.Linear(channel * 96 * 96, 10)
+        self.fc1 = nn.Linear(channel * 48 * 48, 10)
 
     def forward(self, x, channel):
         x = self.bn1(F.relu(self.conv1(x)))
         x = self.bn2(F.relu(self.conv2(x)))
         x = F.max_pool2d(x, 2)
-        x = x.view(-1, channel * 96 * 96)
+        x = x.view(-1, channel * 48 * 48)
         x = F.softmax(self.fc1(x), dim=1)
         return x
 
@@ -93,7 +94,7 @@ def main():
 
     elif args.mode == 'imagenette':
         imagenette_dataset = Imagenette(root='./data', split='train', download=False, transform=transform_blur)
-        imagenette_test_dataset = Imagenette(root='./data', split='test', download=False, transform=transform_blur)
+        imagenette_test_dataset = Imagenette(root='./data', split='val', download=False, transform=transform_blur)
         trainloader = DataLoader(imagenette_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
         testloader = DataLoader(imagenette_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
