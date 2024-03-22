@@ -147,32 +147,32 @@ def main():
             source_images, source_labels = source_data
             target_images, _ = target_data
 
-            # 소스 도메인과 타겟 도메인 데이터 결합
-            combined_images = torch.cat((source_images, target_images), dim=0)
-            combined_labels = torch.cat((torch.ones(source_images.size(0)), torch.zeros(target_images.size(0))), dim=0)
-            combined_images, combined_labels = combined_images.to(device), combined_labels.to(device)
-
-
             source_images, source_labels = source_images.to(device), source_labels.to(device)
             target_images = target_images.to(device)
 
-            # Source domain에 대한 손실 계산
+            # Feature Extract
             source_features = feature_extractor(source_images)
-            source_preds_domain = domain_classifier(source_features)
-            source_labels_domain = torch.full((source_preds_domain.size(0), 1), 1, dtype=torch.float, device=device)
-            source_loss_domain = criterion(source_preds_domain, source_labels_domain)
-
-            source_preds_label = label_classifier(source_features)
-            source_loss_label = criterion(source_preds_label, source_labels)
-
-            # Target domain에 대한 손실 계산
             target_features = feature_extractor(target_images)
-            target_preds_domain = domain_classifier(target_features)
-            target_labels_domain = torch.full((target_preds_domain.size(0), 1), 0, dtype=torch.float, device=device)
-            target_loss_domain = criterion(target_preds_domain, target_labels_domain)
+            source_labels_domain = torch.full((source_features.size(0), 1), 0, dtype=torch.float, device=device)
+            target_labels_domain = torch.full((target_features.size(0), 1), 1, dtype=torch.float, device=device)
 
-            # 총 손실 계산 및 역전파
-            total_loss = source_loss_domain + source_loss_label + target_loss_domain
+            # Concatenate source_features and target_features
+            combined_features = torch.cat((source_features, target_features), dim=0)
+            combined_labels_domain = torch.cat((source_labels_domain, target_labels_domain), dim=0)
+
+            # Shuffle indices
+            indices = torch.randperm(combined_features.size(0))
+
+            # Shuffle combined_features and combined_labels_domain using shuffled indices
+            combined_features_shuffled = combined_features[indices]
+            combined_labels_domain_shuffled = combined_labels_domain[indices]
+
+            preds_domain = domain_classifier(combined_features_shuffled)
+            loss_domain = criterion(preds_domain, combined_labels_domain_shuffled)
+            preds_label = label_classifier(source_features)
+            loss_label = criterion(preds_label, source_labels)
+
+            total_loss = loss_domain + loss_domain + loss_label
 
             optimizer_domain_classifier.zero_grad()
             optimizer_label_classifier.zero_grad()
@@ -184,14 +184,14 @@ def main():
 
         # 결과 출력
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
-              f'Domain Loss: {source_loss_domain:.4f}, '
-              f'Label Loss: {source_loss_label:.4f}, '
+              f'Domain Loss: {loss_domain:.4f}, '
+              f'Label Loss: {loss_label:.4f}, '
               f'Total Loss: {total_loss:.4f}, '
               f'Time: {end_time - start_time:.2f} seconds')
 
         wandb.log({
-            'Domain Loss': source_loss_domain.item(),
-            'Label Loss': source_loss_label.item(),
+            'Domain Loss': loss_domain.item(),
+            'Label Loss': loss_label.item(),
             'Total Loss': total_loss,
             'Training Time': end_time - start_time
         })
