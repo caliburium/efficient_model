@@ -37,3 +37,4 @@ CIFAR-10 32x32
 10. truck    
 
 SVHN 32x32
+MNIST 28x28

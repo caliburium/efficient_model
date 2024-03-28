@@ -170,10 +170,7 @@ def main():
             combined_labels_domain_shuffled = combined_labels_domain[indices]
 
             preds_domain = domain_classifier(combined_features_shuffled)
-
             loss_domain = criterion(preds_domain, combined_labels_domain_shuffled.squeeze().long())
-
-
             preds_label = label_classifier(source_features)
             loss_label = criterion(preds_label, source_labels)
 
