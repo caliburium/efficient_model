@@ -2,6 +2,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
@@ -221,10 +222,9 @@ def main():
             source2_features = source2_features_.view(source2_features.size())
             target_features = target_features_.view(target_features.size())
 
-
-            source1_labels_domain = torch.full((source1_features.size(0), 1), 0, dtype=torch.float, device=device)
-            source2_labels_domain = torch.full((source2_features.size(0), 1), 1, dtype=torch.float, device=device)
-            target_labels_domain = torch.full((target_features.size(0), 1), 2, dtype=torch.float, device=device)
+            source1_labels_domain = torch.full((source1_features.size(0), 1), 0, dtype=torch.int, device=device)
+            source2_labels_domain = torch.full((source2_features.size(0), 1), 1, dtype=torch.int, device=device)
+            target_labels_domain = torch.full((target_features.size(0), 1), 2, dtype=torch.int, device=device)
 
             # 소스만 합친거
             source_features = torch.cat((source1_features, source2_features), dim=0)
@@ -238,8 +238,8 @@ def main():
             source_labels_domain = source_labels_domain[indices]
 
             # 소스/타겟 합친거
-            combined_features = torch.cat((source_features, target_features), dim=0)
-            combined_labels_domain = torch.cat((source_labels_domain, target_labels_domain), dim=0)
+            combined_features = torch.cat((source1_features, source2_features, target_features), dim=0)
+            combined_labels_domain = torch.cat((source1_labels_domain, source2_labels_domain, target_labels_domain), dim=0)
 
             # 소스/타겟 데이터 섞기
             indices = torch.randperm(combined_features.size(0))
@@ -317,7 +317,7 @@ def main():
 
         source_accuracy = correct_source / total_source
         wandb.log({'[Label] Source_1 Accuracy': source_accuracy}, step=epoch+1)
-        print(f'[Label] Source_1 Accuracy: {source_accuracy * 100:.2f}%')
+        print(f'[Label] Source_1 Accuracy: {source_accuracy * 100:.3f}%')
 
         # Source 2 검증
         with torch.no_grad():
@@ -333,7 +333,7 @@ def main():
 
         source_accuracy = correct_source / total_source
         wandb.log({'[Label] Source_2 Accuracy': source_accuracy}, step=epoch+1)
-        print(f'[Label] Source_2 Accuracy: {source_accuracy * 100:.2f}%')
+        print(f'[Label] Source_2 Accuracy: {source_accuracy * 100:.3f}%')
 
         # Target 검증
         with torch.no_grad():
@@ -349,7 +349,7 @@ def main():
 
         target_accuracy = correct_target / total_target
         wandb.log({'[Label] Target Accuracy': target_accuracy}, step=epoch+1)
-        print(f'[Label] Target Accuracy: {target_accuracy * 100:.2f}%')
+        print(f'[Label] Target Accuracy: {target_accuracy * 100:.3f}%')
 
         with torch.no_grad():
             for source_images, _ in source1_loader_test:
@@ -357,6 +357,7 @@ def main():
 
                 source_features = feature_extractor(source_images)
                 source_preds_domain = domain_classifier(source_features)
+                source_preds_domain = nn.Softmax()(source_preds_domain)
 
                 predicted_domain_source = torch.round(source_preds_domain).long()
                 total_domain_source += source_preds_domain.size(0)
@@ -364,7 +365,7 @@ def main():
 
         domain_accuracy_source = correct_domain_source / total_domain_source
         wandb.log({'[Domain] Source_1 Accuracy': domain_accuracy_source}, step=epoch+1)
-        print(f'[Domain] Source_1 Accuracy: {domain_accuracy_source * 100:.2f}%')
+        print(f'[Domain] Source_1 Accuracy: {domain_accuracy_source * 100:.3f}%')
 
         with torch.no_grad():
             for source_images, _ in source2_loader_test:
@@ -372,6 +373,7 @@ def main():
 
                 source_features = feature_extractor(source_images)
                 source_preds_domain = domain_classifier(source_features)
+                source_preds_domain = nn.Softmax()(source_preds_domain)
 
                 predicted_domain_source = torch.round(source_preds_domain).long()
                 total_domain_source += source_preds_domain.size(0)
@@ -379,7 +381,7 @@ def main():
 
         domain_accuracy_source = correct_domain_source / total_domain_source
         wandb.log({'[Domain] Source_2 Accuracy': domain_accuracy_source}, step=epoch+1)
-        print(f'[Domain] Source_2 Accuracy: {domain_accuracy_source * 100:.2f}%')
+        print(f'[Domain] Source_2 Accuracy: {domain_accuracy_source * 100:.3f}%')
 
         with torch.no_grad():
             for target_images, _ in target_loader_test:
@@ -387,6 +389,7 @@ def main():
 
                 target_features = feature_extractor(target_images)
                 target_preds_domain = domain_classifier(target_features)
+                target_preds_domain = nn.Softmax()(target_preds_domain)
 
                 predicted_domain_target = torch.round(target_preds_domain).long()
                 total_domain_target += target_preds_domain.size(0)
@@ -394,7 +397,7 @@ def main():
 
         domain_accuracy_target = correct_domain_target / total_domain_target
         wandb.log({'[Domain] Target Accuracy': domain_accuracy_target}, step=epoch+1)
-        print(f'[Domain] Target Accuracy: {domain_accuracy_target * 100:.2f}%')
+        print(f'[Domain] Target Accuracy: {domain_accuracy_target * 100:.3f}%')
 
 
 if __name__ == '__main__':
