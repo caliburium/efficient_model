@@ -190,6 +190,11 @@ def main():
         label_classifier.train()
         i = 0
 
+        loss_domain_epoch = 0
+        loss_label_epoch = 0
+        total_loss_epoch = 0
+
+
         for source1_data, source2_data, target_data in zip(source1_loader, source2_loader, target_loader):
             p = float(i + epoch * min(len(source1_loader), len(source2_loader), len(target_loader) )) / num_epochs / min(len(source1_loader), len(source2_loader), len(target_loader) )
             labmda_p = 2. / (1. + np.exp(-10 * p)) - 1
@@ -261,19 +266,25 @@ def main():
             optimizer_domain_classifier.step()
             optimizer_label_classifier.step()
 
+            loss_domain_epoch += loss_domain.item()
+            loss_label_epoch += loss_label.item()
+            total_loss_epoch += total_loss.item()
+
+            i += 1
+
         end_time = time.time()
 
         # 결과 출력
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
-              f'Domain Loss: {loss_domain:.4f}, '
-              f'Label Loss: {loss_label:.4f}, '
-              f'Total Loss: {total_loss:.4f}, '
+              f'Domain Loss: {loss_domain_epoch:.4f}, '
+              f'Label Loss: {loss_label_epoch:.4f}, '
+              f'Total Loss: {total_loss_epoch:.4f}, '
               f'Time: {end_time - start_time:.2f} seconds')
 
         wandb.log({
-            'Domain Loss': loss_domain.item(),
-            'Label Loss': loss_label.item(),
-            'Total Loss': total_loss,
+            'Domain Loss': loss_domain_epoch,
+            'Label Loss': loss_label_epoch,
+            'Total Loss': total_loss_epoch,
             'Training Time': end_time - start_time
         })
 
