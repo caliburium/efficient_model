@@ -5,12 +5,28 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
-
+import numpy as np
 import wandb
 import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+from torch.autograd import Function
+
+# https://github.com/fungtion/DANN/blob/master/models/functions.py
+class ReverseLayerF(Function):
+
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output.neg() * ctx.alpha
+
+        return output, None
 
 # 모델 정의
 class FeatureExtractor(nn.Module):
@@ -171,8 +187,13 @@ def main():
         feature_extractor.train()
         domain_classifier.train()
         label_classifier.train()
+        i = 0
 
         for source1_data, source2_data, target_data in zip(source1_loader, source2_loader, target_loader):
+            p = float(i + epoch * min(len(source1_loader), len(source2_loader), len(target_loader) )) / num_epochs / min(len(source1_loader), len(source2_loader), len(target_loader) )
+            labmda_p = 2. / (1. + np.exp(-10 * p)) - 1
+
+
             source1_images, source1_labels = source1_data
             source2_images, source2_labels = source2_data
             target_images, _ = target_data
@@ -185,6 +206,22 @@ def main():
             source1_features = feature_extractor(source1_images)
             source2_features = feature_extractor(source2_images)
             target_features = feature_extractor(target_images)
+
+            # Flatten
+            source1_features_ = source1_features.view(source1_features.size(0), -1)
+            source2_features_ = source2_features.view(source2_features.size(0), -1)
+            target_features_ = target_features.view(target_features.size(0), -1)
+
+            source1_features_ = ReverseLayerF.apply(source1_features_, labmda_p)
+            source2_features_ = ReverseLayerF.apply(source2_features_, labmda_p)
+            target_features_ = ReverseLayerF.apply(target_features_, labmda_p)
+
+            # revert back to original shape
+            source1_features = source1_features_.view(source1_features.size())
+            source2_features = source2_features_.view(source2_features.size())
+            target_features = target_features_.view(target_features.size())
+
+
             source1_labels_domain = torch.full((source1_features.size(0), 1), 0, dtype=torch.float, device=device)
             source2_labels_domain = torch.full((source2_features.size(0), 1), 1, dtype=torch.float, device=device)
             target_labels_domain = torch.full((target_features.size(0), 1), 2, dtype=torch.float, device=device)
@@ -211,7 +248,7 @@ def main():
 
             # 연산
             preds_domain = domain_classifier(combined_features_shuffled)
-            loss_domain = criterion_d(preds_domain, combined_labels_domain_shuffled)
+            loss_domain = criterion_d(preds_domain, combined_labels_domain_shuffled.view(-1,).long())
             preds_label = label_classifier(source_features)
             loss_label = criterion_l(preds_label, source_labels)
 
