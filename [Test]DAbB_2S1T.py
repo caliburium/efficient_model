@@ -199,7 +199,6 @@ def main():
             p = float(i + epoch * min(len(source1_loader), len(source2_loader), len(target_loader) )) / num_epochs / min(len(source1_loader), len(source2_loader), len(target_loader) )
             labmda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
-
             source1_images, source1_labels = source1_data
             source2_images, source2_labels = source2_data
             target_images, _ = target_data
@@ -257,7 +256,6 @@ def main():
             preds_label = label_classifier(source_features)
             loss_label = criterion_l(preds_label, source_labels)
 
-            # domina loss 비정상의 원인인듯
             total_loss = loss_domain + loss_label
 
             optimizer_domain_classifier.zero_grad()
@@ -369,7 +367,7 @@ def main():
                 source_features = feature_extractor(source_images)
                 source_preds_domain = domain_classifier(source_features)
                 source_preds_domain = nn.Softmax()(source_preds_domain)
-
+                source_preds_domain = torch.argmax(source_preds_domain, dim=1)
                 predicted_domain_source = torch.round(source_preds_domain).long()
                 total_domain_source += source_preds_domain.size(0)
                 correct_domain_source += (predicted_domain_source == 0).sum().item()
@@ -385,7 +383,7 @@ def main():
                 source_features = feature_extractor(source_images)
                 source_preds_domain = domain_classifier(source_features)
                 source_preds_domain = nn.Softmax()(source_preds_domain)
-
+                source_preds_domain = torch.argmax(source_preds_domain, dim=1)
                 predicted_domain_source = torch.round(source_preds_domain).long()
                 total_domain_source += source_preds_domain.size(0)
                 correct_domain_source += (predicted_domain_source == 1).sum().item()
@@ -401,7 +399,7 @@ def main():
                 target_features = feature_extractor(target_images)
                 target_preds_domain = domain_classifier(target_features)
                 target_preds_domain = nn.Softmax()(target_preds_domain)
-
+                target_preds_domain = torch.argmax(target_preds_domain, dim=1)
                 predicted_domain_target = torch.round(target_preds_domain).long()
                 total_domain_target += target_preds_domain.size(0)
                 correct_domain_target += (predicted_domain_target == 2).sum().item()
