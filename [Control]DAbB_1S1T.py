@@ -96,7 +96,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="[Test] DAbB_Separated(LD)_S:" + args.source + "_T:" + args.target
+               name="[Control] DAbB_S:" + args.source + "_T:" + args.target
                )
 
     transform = transforms.Compose([
@@ -168,7 +168,7 @@ def main():
         list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=args.label_lr
     )
 
-    criterion_d = nn.MSELoss()
+    criterion_d = nn.BCEWithLogitsLoss()
     criterion_l = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
