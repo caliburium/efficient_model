@@ -49,9 +49,9 @@ class FeatureExtractor(nn.Module):
 class DomainClassifier(nn.Module):
     def __init__(self):
         super(DomainClassifier, self).__init__()
-        self.fc1 = nn.Linear(64 * 16 * 16, 128)
-        self.bn = nn.BatchNorm1d(128)
-        self.fc2 = nn.Linear(128, 3)
+        self.fc1 = nn.Linear(64 * 16 * 16, 64)
+        self.bn = nn.BatchNorm1d(64)
+        self.fc2 = nn.Linear(64, 3)
 
     def forward(self, x):
         x = x.view(-1, 64 * 16 * 16)
@@ -77,8 +77,8 @@ class LabelClassifier(nn.Module):
 def main():
     # MNIST, SVHN, CIFAR10, STL10
     args = argparse.ArgumentParser()
-    args.add_argument('--epoch', type=int, default=100)
-    args.add_argument('--batch_size', type=int, default=128)
+    args.add_argument('--epoch', type=int, default=200)
+    args.add_argument('--batch_size', type=int, default=200)
     args.add_argument('--source1', type=str, default='SVHN')
     args.add_argument('--source2', type=str, default='CIFAR10')
     args.add_argument('--target', type=str, default='MNIST')
@@ -291,30 +291,9 @@ def main():
         feature_extractor.eval()
         label_classifier.eval()
 
-        correct_source, total_source = 0, 0
-        correct_target, total_target = 0, 0
-        correct_domain_source, total_domain_source = 0, 0
-        correct_domain_target, total_domain_target = 0, 0
-
-        """"# Source Combine 검증
         with torch.no_grad():
-            for source_images, source_labels in source_loader_test:
-                source_images, source_labels = source_images.to(device), source_labels.to(device)
-
-                source_features = feature_extractor(source_images)
-                source_preds = label_classifier(source_features)
-
-                _, predicted_source = torch.max(source_preds.data, 1)
-                total_source += source_labels.size(0)
-                correct_source += (predicted_source == source_labels).sum().item()
-
-        source_accuracy = correct_source / total_source
-        wandb.log({'[Label] Source Accuracy': source_accuracy}, step=epoch+1)
-        print(f'[Label] Source Accuracy: {source_accuracy * 100:.2f}%')
-        """
-
-        # Source 1 Label Test
-        with torch.no_grad():
+            # Source 1 Label Test
+            correct_source, total_source = 0, 0
             for source_images, source_labels in source1_loader_test:
                 source_images, source_labels = source_images.to(device), source_labels.to(device)
 
@@ -325,12 +304,12 @@ def main():
                 total_source += source_labels.size(0)
                 correct_source += (predicted_source == source_labels).sum().item()
 
-        source_accuracy = correct_source / total_source
-        wandb.log({'[Label] Source_1 Accuracy': source_accuracy}, step=epoch+1)
-        print(f'[Label] Source_1 Accuracy: {source_accuracy * 100:.3f}%')
+            source_accuracy = correct_source / total_source
+            wandb.log({'[Label] Source_1 Accuracy': source_accuracy}, step=epoch+1)
+            print(f'[Label] Source_1 Accuracy: {source_accuracy * 100:.3f}%')
 
-        # Source 2 Label Test
-        with torch.no_grad():
+            # Source 2 Label Test
+            correct_source, total_source = 0, 0
             for source_images, source_labels in source2_loader_test:
                 source_images, source_labels = source_images.to(device), source_labels.to(device)
 
@@ -341,12 +320,12 @@ def main():
                 total_source += source_labels.size(0)
                 correct_source += (predicted_source == source_labels).sum().item()
 
-        source_accuracy = correct_source / total_source
-        wandb.log({'[Label] Source_2 Accuracy': source_accuracy}, step=epoch+1)
-        print(f'[Label] Source_2 Accuracy: {source_accuracy * 100:.3f}%')
+            source_accuracy = correct_source / total_source
+            wandb.log({'[Label] Source_2 Accuracy': source_accuracy}, step=epoch+1)
+            print(f'[Label] Source_2 Accuracy: {source_accuracy * 100:.3f}%')
 
-        # Target Label Test
-        with torch.no_grad():
+            # Target Label Test
+            correct_target, total_target = 0, 0
             for target_images, target_labels in target_loader_test:
                 target_images, target_labels = target_images.to(device), target_labels.to(device)
 
@@ -357,12 +336,13 @@ def main():
                 total_target += target_labels.size(0)
                 correct_target += (predicted_target == target_labels).sum().item()
 
-        target_accuracy = correct_target / total_target
-        wandb.log({'[Label] Target Accuracy': target_accuracy}, step=epoch+1)
-        print(f'[Label] Target Accuracy: {target_accuracy * 100:.3f}%')
+            target_accuracy = correct_target / total_target
+            wandb.log({'[Label] Target Accuracy': target_accuracy}, step=epoch+1)
+            print(f'[Label] Target Accuracy: {target_accuracy * 100:.3f}%')
 
-        # Source 1 Domain Test
         with torch.no_grad():
+            # Source 1 Domain Test
+            correct_domain_source, total_domain_source = 0, 0
             for source_images, _ in source1_loader_test:
                 source_images = source_images.to(device)
 
@@ -374,12 +354,12 @@ def main():
                 total_domain_source += source_preds_domain.size(0)
                 correct_domain_source += (predicted_domain_source == 0).sum().item()
 
-        domain_accuracy_source = correct_domain_source / total_domain_source
-        wandb.log({'[Domain] Source_1 Accuracy': domain_accuracy_source}, step=epoch+1)
-        print(f'[Domain] Source_1 Accuracy: {domain_accuracy_source * 100:.3f}%')
+            domain_accuracy_source = correct_domain_source / total_domain_source
+            wandb.log({'[Domain] Source_1 Accuracy': domain_accuracy_source}, step=epoch+1)
+            print(f'[Domain] Source_1 Accuracy: {domain_accuracy_source * 100:.3f}%')
 
-        # Source 2 Domain Test
-        with torch.no_grad():
+            # Source 2 Domain Test
+            correct_domain_source, total_domain_source = 0, 0
             for source_images, _ in source2_loader_test:
                 source_images = source_images.to(device)
 
@@ -391,12 +371,12 @@ def main():
                 total_domain_source += source_preds_domain.size(0)
                 correct_domain_source += (predicted_domain_source == 1).sum().item()
 
-        domain_accuracy_source = correct_domain_source / total_domain_source
-        wandb.log({'[Domain] Source_2 Accuracy': domain_accuracy_source}, step=epoch+1)
-        print(f'[Domain] Source_2 Accuracy: {domain_accuracy_source * 100:.3f}%')
+            domain_accuracy_source = correct_domain_source / total_domain_source
+            wandb.log({'[Domain] Source_2 Accuracy': domain_accuracy_source}, step=epoch+1)
+            print(f'[Domain] Source_2 Accuracy: {domain_accuracy_source * 100:.3f}%')
 
-        # Target Domain Test
-        with torch.no_grad():
+            # Target Domain Test
+            correct_domain_target, total_domain_target = 0, 0
             for target_images, _ in target_loader_test:
                 target_images = target_images.to(device)
 
@@ -408,9 +388,9 @@ def main():
                 total_domain_target += target_preds_domain.size(0)
                 correct_domain_target += (predicted_domain_target == 2).sum().item()
 
-        domain_accuracy_target = correct_domain_target / total_domain_target
-        wandb.log({'[Domain] Target Accuracy': domain_accuracy_target}, step=epoch+1)
-        print(f'[Domain] Target Accuracy: {domain_accuracy_target * 100:.3f}%')
+            domain_accuracy_target = correct_domain_target / total_domain_target
+            wandb.log({'[Domain] Target Accuracy': domain_accuracy_target}, step=epoch+1)
+            print(f'[Domain] Target Accuracy: {domain_accuracy_target * 100:.3f}%')
 
 
 if __name__ == '__main__':
