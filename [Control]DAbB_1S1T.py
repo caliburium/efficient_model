@@ -18,14 +18,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class ReverseLayerF(Function):
     @staticmethod
-    def forward(ctx, x, alpha):
-        ctx.alpha = alpha
+    def forward(ctx, x, lambda_p):
+        ctx.lambda_p = lambda_p
 
         return x.view_as(x)
 
     @staticmethod
     def backward(ctx, grad_output):
-        output = grad_output.neg() * ctx.alpha
+        output = grad_output.neg() * ctx.lambda_p
 
         return output, None
 
@@ -68,10 +68,11 @@ class DomainClassifier(nn.Module):
         super(DomainClassifier, self).__init__()
         self.fc1 = nn.Linear(64 * 16 * 16, 128)
         self.bn = nn.BatchNorm1d(128)
-        self.fc2 = nn.Linear(128, 2)
+        self.fc2 = nn.Linear(128, 1)
 
-    def forward(self, x):
+    def forward(self, x, lambda_p):
         x = x.view(-1, 64 * 16 * 16)
+        x = ReverseLayerF.apply(x, lambda_p)
         x = torch.relu(self.bn(self.fc1(x)))
         x = self.fc2(x)
         return x
@@ -95,7 +96,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="[Control] DAbB_S:" + args.source + "_T:" + args.target
+               name="[Test] DAbB_Separated(LD)_S:" + args.source + "_T:" + args.target
                )
 
     transform = transforms.Compose([
@@ -148,9 +149,11 @@ def main():
     else:
         print("no target")
 
+    combined_dataset = ConcatDataset([source_dataset, target_dataset])
+    combined_loader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     source_loader = DataLoader(source_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
     source_loader_test = DataLoader(source_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
-    target_loader = DataLoader(target_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     target_loader_test = DataLoader(target_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
 
     print("data load complete, start training")
@@ -167,7 +170,7 @@ def main():
         list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=args.label_lr
     )
 
-    criterion_d = nn.BCEWithLogitsLoss()
+    criterion_d = nn.MSELoss()
     criterion_l = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
@@ -180,64 +183,34 @@ def main():
 
         loss_domain_epoch = 0
         loss_label_epoch = 0
-        total_loss_epoch = 0
 
-        for source_data, target_data in zip(source_loader, target_loader):
-            p = float(i + epoch * min(len(source_loader), len(target_loader))) / num_epochs / min(len(source_loader),
-                                                                                                  len(target_loader))
-            labmda_p = 2. / (1. + np.exp(-10 * p)) - 1
+        # Label Train
+        for source_data in source_loader:
+            images, labels = source_data
+            images, labels = images.to(device), labels.to(device)
+            features = feature_extractor(images)
+            preds = label_classifier(features)
+            loss = criterion_l(preds, labels)
+            optimizer_label_classifier.zero_grad()
+            loss.backward()
+            optimizer_label_classifier.step()
+            loss_label_epoch += loss.item()
 
-            source_images, source_labels = source_data
-            target_images, _ = target_data
+        # Domain Train
+        for combined_data in combined_loader:
+            p = float(i + epoch * len(combined_loader)) / num_epochs / len(combined_loader)
+            lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
-            source_images, source_labels = source_images.to(device), source_labels.to(device)
-            target_images = target_images.to(device)
-
-            # Feature Extract (source = 1, target = 0)
-            source_features = feature_extractor(source_images)
-            target_features = feature_extractor(target_images)
-
-            # Flatten
-            source_features_ = source_features.view(source_features.size(0), -1)
-            target_features_ = target_features.view(target_features.size(0), -1)
-
-            source_features_ = ReverseLayerF.apply(source_features_, labmda_p)
-            target_features_ = ReverseLayerF.apply(target_features_, labmda_p)
-
-            # revert back to original shape
-            source_features = source_features_.view(source_features.size())
-            target_features = target_features_.view(target_features.size())
-
-            # domain label
-            source_labels_domain = torch.full((source_features.size(0), 1), 1, dtype=torch.int, device=device)
-            target_labels_domain = torch.full((target_features.size(0), 1), 0, dtype=torch.int, device=device)
-
-            # 소스/타겟 합친거
-            combined_features = torch.cat((source_features, target_features), dim=0)
-            combined_labels_domain = torch.cat((source_labels_domain, target_labels_domain))
-
-            # 소스/타겟 데이터 섞기
-            indices = torch.randperm(combined_features.size(0))
-            combined_features_shuffled = combined_features[indices]
-            combined_labels_domain_shuffled = combined_labels_domain[indices]
-
-            # 연산
-            preds_domain = domain_classifier(combined_features_shuffled)
-            loss_domain = criterion_d(preds_domain, combined_labels_domain_shuffled)
-            preds_label = label_classifier(source_features)
-            loss_label = criterion_l(preds_label, source_labels)
-
-            total_loss = loss_domain + loss_label
+            images, _ = combined_data
+            images = images.to(device)
+            features = feature_extractor(images)
+            preds = domain_classifier(features, lambda_p)
+            loss = criterion_d(preds, images)
 
             optimizer_domain_classifier.zero_grad()
-            optimizer_label_classifier.zero_grad()
-            total_loss.backward()
+            loss.backward()
             optimizer_domain_classifier.step()
-            optimizer_label_classifier.step()
-
-            loss_domain_epoch += loss_domain.item()
-            loss_label_epoch += loss_label.item()
-            total_loss_epoch += total_loss.item()
+            loss_domain_epoch += loss.item()
 
             i += 1
 
@@ -247,26 +220,21 @@ def main():
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Domain Loss: {loss_domain_epoch:.4f}, '
               f'Label Loss: {loss_label_epoch:.4f}, '
-              f'Total Loss: {total_loss_epoch:.4f}, '
               f'Time: {end_time - start_time:.2f} seconds')
 
         wandb.log({
             'Domain Loss': loss_domain_epoch,
             'Label Loss': loss_label_epoch,
-            'Total Loss': total_loss_epoch,
             'Training Time': end_time - start_time
         })
 
         # 테스트
         feature_extractor.eval()
         label_classifier.eval()
-
-        correct_source, total_source = 0, 0
-        correct_target, total_target = 0, 0
-        correct_domain_source, total_domain_source = 0, 0
-        correct_domain_target, total_domain_target = 0, 0
+        domain_classifier.eval()
 
         with torch.no_grad():
+            correct_source, total_source = 0, 0
             for source_images, source_labels in source_loader_test:
                 source_images, source_labels = source_images.to(device), source_labels.to(device)
 
@@ -277,11 +245,11 @@ def main():
                 total_source += source_labels.size(0)
                 correct_source += (predicted_source == source_labels).sum().item()
 
-        source_accuracy = correct_source / total_source
-        wandb.log({'[Label] Source_ Accuracy': source_accuracy}, step=epoch + 1)
-        print(f'[Label] Source_ Accuracy: {source_accuracy * 100:.3f}%')
+            source_accuracy = correct_source / total_source
+            wandb.log({'[Label] Source_ Accuracy': source_accuracy}, step=epoch + 1)
+            print(f'[Label] Source_ Accuracy: {source_accuracy * 100:.3f}%')
 
-        with torch.no_grad():
+            correct_target, total_target = 0, 0
             for target_images, target_labels in target_loader_test:
                 target_images, target_labels = target_images.to(device), target_labels.to(device)
 
@@ -292,39 +260,37 @@ def main():
                 total_target += target_labels.size(0)
                 correct_target += (predicted_target == target_labels).sum().item()
 
-        target_accuracy = correct_target / total_target
-        wandb.log({'[Label] Target Accuracy': target_accuracy}, step=epoch + 1)
-        print(f'[Label] Target Accuracy: {target_accuracy * 100:.3f}%')
+            target_accuracy = correct_target / total_target
+            wandb.log({'[Label] Target Accuracy': target_accuracy}, step=epoch + 1)
+            print(f'[Label] Target Accuracy: {target_accuracy * 100:.3f}%')
 
-        with torch.no_grad():
+            correct_domain_source, total_domain_source = 0, 0
             for source_images, _ in source_loader_test:
                 source_images = source_images.to(device)
-
                 source_features = feature_extractor(source_images)
-                source_preds_domain = domain_classifier(source_features)
-                source_preds_domain = torch.argmax(source_preds_domain, dim=1)
-                predicted_domain_source = torch.round(source_preds_domain).long()
-                total_domain_source += source_preds_domain.size(0)
-                correct_domain_source += (predicted_domain_source == 1).sum().item()
+                source_preds = domain_classifier(source_features, 0)  # lambda_p = 0 (Source 도메인)
+                source_preds = torch.sigmoid(source_preds)
+                predicted_source = (source_preds <= 0.5).long()  # 0.5를 기준으로 binary classification
+                total_domain_source += source_images.size(0)
+                correct_domain_source += (predicted_source == 0).sum().item()  # 정확하게 Source 도메인으로 분류된 케이스 카운트
 
-        domain_accuracy_source = correct_domain_source / total_domain_source
-        wandb.log({'[Domain] Source_ Accuracy': domain_accuracy_source}, step=epoch + 1)
-        print(f'[Domain] Source_ Accuracy: {domain_accuracy_source * 100:.3f}%')
+            source_domain_accuracy = correct_domain_source / total_domain_source
+            wandb.log({'[Domain] Source Accuracy': source_domain_accuracy}, step=epoch + 1)
+            print(f'[Domain] Source Accuracy: {source_domain_accuracy * 100:.3f}%')
 
-        with torch.no_grad():
+            correct_domain_target, total_domain_target = 0, 0
             for target_images, _ in target_loader_test:
                 target_images = target_images.to(device)
-
                 target_features = feature_extractor(target_images)
-                target_preds_domain = domain_classifier(target_features)
-                target_preds_domain = torch.argmax(target_preds_domain, dim=1)
-                predicted_domain_target = torch.round(target_preds_domain).long()
-                total_domain_target += target_preds_domain.size(0)
-                correct_domain_target += (predicted_domain_target == 0).sum().item()
+                target_preds = domain_classifier(target_features, 1)  # lambda_p = 1 (Target 도메인)
+                target_preds = torch.sigmoid(target_preds)
+                predicted_target = (target_preds > 0.5).long()  # 0.5를 기준으로 binary classification
+                total_domain_target += target_images.size(0)
+                correct_domain_target += (predicted_target == 1).sum().item()  # 정확하게 Target 도메인으로 분류된 케이스 카운트
 
-        domain_accuracy_target = correct_domain_target / total_domain_target
-        wandb.log({'[Domain] Target Accuracy': domain_accuracy_target}, step=epoch + 1)
-        print(f'[Domain] Target Accuracy: {domain_accuracy_target * 100:.3f}%')
+            target_domain_accuracy = correct_domain_target / total_domain_target
+            wandb.log({'[Domain] Target Accuracy': target_domain_accuracy}, step=epoch + 1)
+            print(f'[Domain] Target Accuracy: {target_domain_accuracy * 100:.3f}%')
 
 
 if __name__ == '__main__':
