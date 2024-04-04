@@ -149,10 +149,8 @@ def main():
     else:
         print("no target")
 
-    combined_dataset = ConcatDataset([source_dataset, target_dataset])
-    combined_loader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     source_loader = DataLoader(source_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-
+    target_loader = DataLoader(target_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     source_loader_test = DataLoader(source_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
     target_loader_test = DataLoader(target_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
 
@@ -184,33 +182,36 @@ def main():
         loss_domain_epoch = 0
         loss_label_epoch = 0
 
-        # Label Train
-        for source_data in source_loader:
-            images, labels = source_data
-            images, labels = images.to(device), labels.to(device)
-            features = feature_extractor(images)
-            preds = label_classifier(features)
-            loss = criterion_l(preds, labels)
-            optimizer_label_classifier.zero_grad()
-            loss.backward()
-            optimizer_label_classifier.step()
-            loss_label_epoch += loss.item()
-
-        # Domain Train
-        for combined_data in combined_loader:
-            p = float(i + epoch * len(combined_loader)) / num_epochs / len(combined_loader)
+        for source_data, target_data in zip(source_loader, target_loader):
+            p = float(i + epoch * min(len(source_loader), len(target_loader))) / num_epochs / min(len(source_loader), len(target_loader))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
-            images, _ = combined_data
-            images = images.to(device)
-            features = feature_extractor(images)
-            preds = domain_classifier(features, lambda_p)
-            loss = criterion_d(preds, images)
+            source_images, source_labels = source_data
+            source_images, source_labels = source_images.to(device), source_labels.to(device)
+            target_images, _ = target_data
+            target_images = target_images.to(device)
 
+            source_features = feature_extractor(source_images)
+            target_features = feature_extractor(target_images)
+
+            images = torch.cat((source_images, target_images), dim=0)
+            features = torch.cat((source_features, target_features), dim=0)
+
+            label_preds = label_classifier(source_features)
+            label_loss = criterion_l(label_preds, source_labels)
+            domain_preds = domain_classifier(features, lambda_p)
+            domain_loss = criterion_d(domain_preds, images)
+
+            total_loss = domain_loss + label_loss
+
+            optimizer_label_classifier.zero_grad()
             optimizer_domain_classifier.zero_grad()
-            loss.backward()
+            total_loss.backward()
+            optimizer_label_classifier.step()
             optimizer_domain_classifier.step()
-            loss_domain_epoch += loss.item()
+
+            loss_label_epoch += label_loss.item()
+            loss_domain_epoch += domain_loss.item()
 
             i += 1
 
