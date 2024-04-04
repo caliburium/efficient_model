@@ -1,8 +1,10 @@
+# https://github.com/fungtion/DANN/blob/master/models/functions.py
 import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.autograd import Function
 from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
@@ -12,11 +14,8 @@ import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from torch.autograd import Function
 
-# https://github.com/fungtion/DANN/blob/master/models/functions.py
 class ReverseLayerF(Function):
-
     @staticmethod
     def forward(ctx, x, alpha):
         ctx.alpha = alpha
@@ -28,6 +27,7 @@ class ReverseLayerF(Function):
         output = grad_output.neg() * ctx.alpha
 
         return output, None
+
 
 # 모델 정의
 class FeatureExtractor(nn.Module):
@@ -41,6 +41,7 @@ class FeatureExtractor(nn.Module):
 
     def forward(self, x):
         x = self.bn1(self.relu(self.conv1(x)))
+        x = F.max_pool2d(x, 2)
         x = self.bn2(self.relu(self.conv2(x)))
         return x
 
@@ -48,12 +49,13 @@ class FeatureExtractor(nn.Module):
 class DomainClassifier(nn.Module):
     def __init__(self):
         super(DomainClassifier, self).__init__()
-        self.fc1 = nn.Linear(64 * 32 * 32, 128)
+        self.fc1 = nn.Linear(64 * 16 * 16, 128)
+        self.bn = nn.BatchNorm1d(128)
         self.fc2 = nn.Linear(128, 3)
 
     def forward(self, x):
-        x = x.view(-1, 64 * 32 * 32)
-        x = torch.relu(self.fc1(x))
+        x = x.view(-1, 64 * 16 * 16)
+        x = torch.relu(self.bn(self.fc1(x)))
         x = self.fc2(x)
         return x
 
@@ -61,12 +63,13 @@ class DomainClassifier(nn.Module):
 class LabelClassifier(nn.Module):
     def __init__(self):
         super(LabelClassifier, self).__init__()
-        self.fc1 = nn.Linear(64 * 32 * 32, 256)
-        self.fc2 = nn.Linear(256, 10)
+        self.fc1 = nn.Linear(64 * 16 * 16, 128)
+        self.bn = nn.BatchNorm1d(128)
+        self.fc2 = nn.Linear(128, 10)
 
     def forward(self, x):
-        x = x.view(-1, 64 * 32 * 32)
-        x = torch.relu(self.fc1(x))
+        x = x.view(-1, 64 * 16 * 16)
+        x = torch.relu(self.bn(self.fc1(x)))
         x = self.fc2(x)
         return x
 
@@ -75,6 +78,7 @@ def main():
     # MNIST, SVHN, CIFAR10, STL10
     args = argparse.ArgumentParser()
     args.add_argument('--epoch', type=int, default=100)
+    args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--source1', type=str, default='SVHN')
     args.add_argument('--source2', type=str, default='CIFAR10')
     args.add_argument('--target', type=str, default='MNIST')
@@ -82,13 +86,14 @@ def main():
     args.add_argument('--label_lr', type=float, default=0.001)
     args = args.parse_args()
 
+    batch_size = args.batch_size
     num_epochs = args.epoch
 
     # Initialize Weights and Biases
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="[Control] DAbB_S:" + args.source1 + "/" + args.source2 + "_T:" + args.target
+               name="[Test] DAbB_S:" + args.source1 + "/" + args.source2 + "_T:" + args.target
                )
 
     transform = transforms.Compose([
@@ -156,14 +161,14 @@ def main():
     else:
         print("no target")
 
-    combined_source = ConcatDataset([source1_dataset_test, source2_dataset_test])
-    source_loader_test = DataLoader(combined_source, batch_size=64, shuffle=True, num_workers=4)
-    source1_loader = DataLoader(source1_dataset, batch_size=64, shuffle=True, num_workers=4)
-    source1_loader_test = DataLoader(source1_dataset_test, batch_size=64, shuffle=True, num_workers=4)
-    source2_loader = DataLoader(source2_dataset, batch_size=64, shuffle=True, num_workers=4)
-    source2_loader_test = DataLoader(source2_dataset_test, batch_size=64, shuffle=True, num_workers=4)
-    target_loader = DataLoader(target_dataset, batch_size=64, shuffle=True, num_workers=4)
-    target_loader_test = DataLoader(target_dataset_test, batch_size=64, shuffle=True, num_workers=4)
+    # combined_source = ConcatDataset([source1_dataset_test, source2_dataset_test])
+    # source_loader_test = DataLoader(combined_source, batch_size=batch_size, shuffle=True, num_workers=4)
+    source1_loader = DataLoader(source1_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    source1_loader_test = DataLoader(source1_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
+    source2_loader = DataLoader(source2_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    source2_loader_test = DataLoader(source2_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
+    target_loader = DataLoader(target_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    target_loader_test = DataLoader(target_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
 
     print("data load complete, start training")
 
@@ -194,7 +199,6 @@ def main():
         loss_label_epoch = 0
         total_loss_epoch = 0
 
-
         for source1_data, source2_data, target_data in zip(source1_loader, source2_loader, target_loader):
             p = float(i + epoch * min(len(source1_loader), len(source2_loader), len(target_loader) )) / num_epochs / min(len(source1_loader), len(source2_loader), len(target_loader) )
             labmda_p = 2. / (1. + np.exp(-10 * p)) - 1
@@ -207,42 +211,41 @@ def main():
             source2_images, source2_labels = source2_images.to(device), source2_labels.to(device)
             target_images = target_images.to(device)
 
-            # Feature Extract (source1 = 0, source2 = 1, target = 2)
+            # Feature Extract
             source1_features = feature_extractor(source1_images)
             source2_features = feature_extractor(source2_images)
             target_features = feature_extractor(target_images)
 
-            # Flatten
-            source1_features_ = source1_features.view(source1_features.size(0), -1)
-            source2_features_ = source2_features.view(source2_features.size(0), -1)
-            target_features_ = target_features.view(target_features.size(0), -1)
+            ###########################################################################################################
+            # 소스만 합치고 섞
+            source_features = torch.cat((source1_features, source2_features), dim=0)
+            source_labels = torch.cat((source1_labels, source2_labels), dim=0)
+            indices = torch.randperm(source_features.size(0))
+            source_features = source_features[indices]
+            source_labels = source_labels[indices]
 
-            source1_features_ = ReverseLayerF.apply(source1_features_, labmda_p)
-            source2_features_ = ReverseLayerF.apply(source2_features_, labmda_p)
-            target_features_ = ReverseLayerF.apply(target_features_, labmda_p)
+            preds_label = label_classifier(source_features)
+            loss_label = criterion_l(preds_label, source_labels)
+            ###########################################################################################################
 
-            # revert back to original shape
-            source1_features = source1_features_.view(source1_features.size())
-            source2_features = source2_features_.view(source2_features.size())
-            target_features = target_features_.view(target_features.size())
+            # Reverse Layer For Domain Classifier
+            source1_features_reversed = source1_features.view(source1_features.size(0), -1)
+            source2_features_reversed = source2_features.view(source2_features.size(0), -1)
+            target_features_reversed = target_features.view(target_features.size(0), -1)
+            source1_features_reversed = ReverseLayerF.apply(source1_features_reversed, labmda_p)
+            source2_features_reversed = ReverseLayerF.apply(source2_features_reversed, labmda_p)
+            target_features_reversed = ReverseLayerF.apply(target_features_reversed, labmda_p)
+            source1_features_reversed = source1_features_reversed.view(source1_features.size())
+            source2_features_reversed = source2_features_reversed.view(source2_features.size())
+            target_features_reversed = target_features_reversed.view(target_features.size())
 
+            # Domain Label 생성 (source1 = 0, source2 = 1, target = 2)
             source1_labels_domain = torch.full((source1_features.size(0), 1), 0, dtype=torch.int, device=device)
             source2_labels_domain = torch.full((source2_features.size(0), 1), 1, dtype=torch.int, device=device)
             target_labels_domain = torch.full((target_features.size(0), 1), 2, dtype=torch.int, device=device)
 
-            # 소스만 합친거
-            source_features = torch.cat((source1_features, source2_features), dim=0)
-            source_labels = torch.cat((source1_labels, source2_labels), dim=0)
-            source_labels_domain = torch.cat((source1_labels_domain, source2_labels_domain), dim=0)
-
-            # 소스 섞어
-            indices = torch.randperm(source_features.size(0))
-            source_features = source_features[indices]
-            source_labels = source_labels[indices]
-            source_labels_domain = source_labels_domain[indices]
-
             # 소스/타겟 합친거
-            combined_features = torch.cat((source1_features, source2_features, target_features), dim=0)
+            combined_features = torch.cat((source1_features_reversed, source2_features_reversed, target_features_reversed), dim=0)
             combined_labels_domain = torch.cat((source1_labels_domain, source2_labels_domain, target_labels_domain), dim=0)
 
             # 소스/타겟 데이터 섞기
@@ -253,8 +256,6 @@ def main():
             # 연산
             preds_domain = domain_classifier(combined_features_shuffled)
             loss_domain = criterion_d(preds_domain, combined_labels_domain_shuffled.view(-1,).long())
-            preds_label = label_classifier(source_features)
-            loss_label = criterion_l(preds_label, source_labels)
 
             total_loss = loss_domain + loss_label
 
@@ -312,7 +313,7 @@ def main():
         print(f'[Label] Source Accuracy: {source_accuracy * 100:.2f}%')
         """
 
-        # Source 1 검증
+        # Source 1 Label Test
         with torch.no_grad():
             for source_images, source_labels in source1_loader_test:
                 source_images, source_labels = source_images.to(device), source_labels.to(device)
@@ -328,7 +329,7 @@ def main():
         wandb.log({'[Label] Source_1 Accuracy': source_accuracy}, step=epoch+1)
         print(f'[Label] Source_1 Accuracy: {source_accuracy * 100:.3f}%')
 
-        # Source 2 검증
+        # Source 2 Label Test
         with torch.no_grad():
             for source_images, source_labels in source2_loader_test:
                 source_images, source_labels = source_images.to(device), source_labels.to(device)
@@ -344,7 +345,7 @@ def main():
         wandb.log({'[Label] Source_2 Accuracy': source_accuracy}, step=epoch+1)
         print(f'[Label] Source_2 Accuracy: {source_accuracy * 100:.3f}%')
 
-        # Target 검증
+        # Target Label Test
         with torch.no_grad():
             for target_images, target_labels in target_loader_test:
                 target_images, target_labels = target_images.to(device), target_labels.to(device)
@@ -360,6 +361,7 @@ def main():
         wandb.log({'[Label] Target Accuracy': target_accuracy}, step=epoch+1)
         print(f'[Label] Target Accuracy: {target_accuracy * 100:.3f}%')
 
+        # Source 1 Domain Test
         with torch.no_grad():
             for source_images, _ in source1_loader_test:
                 source_images = source_images.to(device)
@@ -376,6 +378,7 @@ def main():
         wandb.log({'[Domain] Source_1 Accuracy': domain_accuracy_source}, step=epoch+1)
         print(f'[Domain] Source_1 Accuracy: {domain_accuracy_source * 100:.3f}%')
 
+        # Source 2 Domain Test
         with torch.no_grad():
             for source_images, _ in source2_loader_test:
                 source_images = source_images.to(device)
@@ -392,6 +395,7 @@ def main():
         wandb.log({'[Domain] Source_2 Accuracy': domain_accuracy_source}, step=epoch+1)
         print(f'[Domain] Source_2 Accuracy: {domain_accuracy_source * 100:.3f}%')
 
+        # Target Domain Test
         with torch.no_grad():
             for target_images, _ in target_loader_test:
                 target_images = target_images.to(device)
