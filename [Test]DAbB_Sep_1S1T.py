@@ -190,7 +190,7 @@ def main():
             source_features = feature_extractor(source_images)
             target_features = feature_extractor(target_images)
             source_dlabel = torch.full((source_features.size(0),1), 1, dtype=torch.int, device=device)
-            target_dlabel = torch.full((source_features.size(0),1), 0, dtype=torch.int, device=device)
+            target_dlabel = torch.full((target_features.size(0),1), 0, dtype=torch.int, device=device)
 
             combined_features = torch.cat((source_features, target_features), dim=0)
             combined_dlabel = torch.cat((source_dlabel, target_dlabel), dim=0)
