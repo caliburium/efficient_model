@@ -1,10 +1,9 @@
-# https://github.com/fungtion/DANN/blob/master/models/functions.py
 import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.autograd import Function
+from functions import ReverseLayerF
 from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
@@ -13,20 +12,6 @@ import wandb
 import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-class ReverseLayerF(Function):
-    @staticmethod
-    def forward(ctx, x, alpha):
-        ctx.alpha = alpha
-
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        output = grad_output.neg() * ctx.alpha
-
-        return output, None
 
 
 # 모델 정의
@@ -53,8 +38,9 @@ class DomainClassifier(nn.Module):
         self.bn = nn.BatchNorm1d(64)
         self.fc2 = nn.Linear(64, 3)
 
-    def forward(self, x):
+    def forward(self, x, lambda_p):
         x = x.view(-1, 64 * 16 * 16)
+        x = ReverseLayerF.apply(x, lambda_p)
         x = torch.relu(self.bn(self.fc1(x)))
         x = self.fc2(x)
         return x
@@ -228,24 +214,13 @@ def main():
             loss_label = criterion_l(preds_label, source_labels)
             ###########################################################################################################
 
-            # Reverse Layer For Domain Classifier
-            source1_features_reversed = source1_features.view(source1_features.size(0), -1)
-            source2_features_reversed = source2_features.view(source2_features.size(0), -1)
-            target_features_reversed = target_features.view(target_features.size(0), -1)
-            source1_features_reversed = ReverseLayerF.apply(source1_features_reversed, labmda_p)
-            source2_features_reversed = ReverseLayerF.apply(source2_features_reversed, labmda_p)
-            target_features_reversed = ReverseLayerF.apply(target_features_reversed, labmda_p)
-            source1_features_reversed = source1_features_reversed.view(source1_features.size())
-            source2_features_reversed = source2_features_reversed.view(source2_features.size())
-            target_features_reversed = target_features_reversed.view(target_features.size())
-
             # Domain Label 생성 (source1 = 0, source2 = 1, target = 2)
             source1_labels_domain = torch.full((source1_features.size(0), 1), 0, dtype=torch.int, device=device)
             source2_labels_domain = torch.full((source2_features.size(0), 1), 1, dtype=torch.int, device=device)
             target_labels_domain = torch.full((target_features.size(0), 1), 2, dtype=torch.int, device=device)
 
             # 소스/타겟 합친거
-            combined_features = torch.cat((source1_features_reversed, source2_features_reversed, target_features_reversed), dim=0)
+            combined_features = torch.cat((source1_features, source2_features, target_features), dim=0)
             combined_labels_domain = torch.cat((source1_labels_domain, source2_labels_domain, target_labels_domain), dim=0)
 
             # 소스/타겟 데이터 섞기
@@ -254,7 +229,7 @@ def main():
             combined_labels_domain_shuffled = combined_labels_domain[indices]
 
             # 연산
-            preds_domain = domain_classifier(combined_features_shuffled)
+            preds_domain = domain_classifier(combined_features_shuffled, labmda_p)
             loss_domain = criterion_d(preds_domain, combined_labels_domain_shuffled.view(-1,).long())
 
             total_loss = loss_domain + loss_label

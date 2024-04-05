@@ -1,11 +1,9 @@
-# https://github.com/fungtion/DANN/blob/master/models/functions.py
-
 import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.autograd import Function
+from functions import ReverseLayerF
 from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
@@ -16,21 +14,6 @@ import time
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class ReverseLayerF(Function):
-    @staticmethod
-    def forward(ctx, x, lambda_p):
-        ctx.lambda_p = lambda_p
-
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        output = grad_output.neg() * ctx.lambda_p
-
-        return output, None
-
-
-# 모델 정의
 class FeatureExtractor(nn.Module):
     def __init__(self):
         super(FeatureExtractor, self).__init__()
@@ -68,13 +51,13 @@ class DomainClassifier(nn.Module):
         super(DomainClassifier, self).__init__()
         self.fc1 = nn.Linear(64 * 16 * 16, 128)
         self.bn = nn.BatchNorm1d(128)
-        self.fc2 = nn.Linear(128, 1)
+        self.fc2 = nn.Linear(128, 2)
 
     def forward(self, x, lambda_p):
         x = x.view(-1, 64 * 16 * 16)
         x = ReverseLayerF.apply(x, lambda_p)
         x = torch.relu(self.bn(self.fc1(x)))
-        x = self.fc2(x)
+        x = torch.softmax(self.fc2(x), dim=1)
         return x
 
 
@@ -82,7 +65,7 @@ def main():
     # MNIST, SVHN, CIFAR10, STL10
     args = argparse.ArgumentParser()
     args.add_argument('--epoch', type=int, default=100)
-    args.add_argument('--batch_size', type=int, default=128)
+    args.add_argument('--batch_size', type=int, default=256)
     args.add_argument('--source', type=str, default='SVHN')
     args.add_argument('--target', type=str, default='MNIST')
     args.add_argument('--domain_lr', type=float, default=0.001)
@@ -149,10 +132,8 @@ def main():
     else:
         print("no target")
 
-    combined_dataset = ConcatDataset([source_dataset, target_dataset])
-    combined_loader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     source_loader = DataLoader(source_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-
+    target_loader = DataLoader(target_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     source_loader_test = DataLoader(source_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
     target_loader_test = DataLoader(target_dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
 
@@ -170,7 +151,7 @@ def main():
         list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=args.label_lr
     )
 
-    criterion_d = nn.MSELoss()
+    criterion_d = nn.CrossEntropyLoss()
     criterion_l = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
@@ -197,18 +178,32 @@ def main():
             loss_label_epoch += loss.item()
 
         # Domain Train
-        for combined_data in combined_loader:
-            p = float(i + epoch * len(combined_loader)) / num_epochs / len(combined_loader)
+        for source_data, target_data in zip(source_loader, target_loader):
+            p = float(i + epoch * min(len(source_loader), len(target_loader))) / num_epochs / min(len(source_loader), len(target_loader))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
-            images, _ = combined_data
-            images = images.to(device)
-            features = feature_extractor(images)
-            preds = domain_classifier(features, lambda_p)
-            loss = criterion_d(preds, images)
+            source_images, source_labels = source_data
+            source_images, source_labels = source_images.to(device), source_labels.to(device)
+            target_images, _ = target_data
+            target_images = target_images.to(device)
+
+            source_features = feature_extractor(source_images)
+            target_features = feature_extractor(target_images)
+            source_dlabel = torch.full((source_features.size(0),1), 1, dtype=torch.int, device=device)
+            target_dlabel = torch.full((source_features.size(0),1), 0, dtype=torch.int, device=device)
+
+            combined_features = torch.cat((source_features, target_features), dim=0)
+            combined_dlabel = torch.cat((source_dlabel, target_dlabel), dim=0)
+
+            indices = torch.randperm(combined_features.size(0))
+            combined_features_shuffled = combined_features[indices]
+            combined_dlabel_shuffled = combined_dlabel[indices]
+
+            domain_preds = domain_classifier(combined_features_shuffled, lambda_p)
+            domain_loss = criterion_d(domain_preds, combined_dlabel_shuffled.view(-1,).long())
 
             optimizer_domain_classifier.zero_grad()
-            loss.backward()
+            domain_loss.backward()
             optimizer_domain_classifier.step()
             loss_domain_epoch += loss.item()
 
@@ -246,8 +241,8 @@ def main():
                 correct_source += (predicted_source == source_labels).sum().item()
 
             source_accuracy = correct_source / total_source
-            wandb.log({'[Label] Source_ Accuracy': source_accuracy}, step=epoch + 1)
-            print(f'[Label] Source_ Accuracy: {source_accuracy * 100:.3f}%')
+            wandb.log({'[Label] Source Accuracy': source_accuracy}, step=epoch + 1)
+            print(f'[Label] Source Accuracy: {source_accuracy * 100:.3f}%')
 
             correct_target, total_target = 0, 0
             for target_images, target_labels in target_loader_test:
@@ -264,31 +259,33 @@ def main():
             wandb.log({'[Label] Target Accuracy': target_accuracy}, step=epoch + 1)
             print(f'[Label] Target Accuracy: {target_accuracy * 100:.3f}%')
 
-            correct_domain_source, total_domain_source = 0, 0
+            correct_source_domain, total_source_domain = 0, 0
             for source_images, _ in source_loader_test:
                 source_images = source_images.to(device)
-                source_features = feature_extractor(source_images)
-                source_preds = domain_classifier(source_features, 0)  # lambda_p = 0 (Source 도메인)
-                source_preds = torch.sigmoid(source_preds)
-                predicted_source = (source_preds <= 0.5).long()  # 0.5를 기준으로 binary classification
-                total_domain_source += source_images.size(0)
-                correct_domain_source += (predicted_source == 0).sum().item()  # 정확하게 Source 도메인으로 분류된 케이스 카운트
 
-            source_domain_accuracy = correct_domain_source / total_domain_source
+                source_features = feature_extractor(source_images)
+                domain_preds = domain_classifier(source_features, lambda_p=0.0)
+
+                _, predicted_domain_source = torch.max(domain_preds.data, 1)
+                total_source_domain += source_images.size(0)
+                correct_source_domain += (predicted_domain_source == 1).sum().item()
+
+            source_domain_accuracy = correct_source_domain / total_source_domain
             wandb.log({'[Domain] Source Accuracy': source_domain_accuracy}, step=epoch + 1)
             print(f'[Domain] Source Accuracy: {source_domain_accuracy * 100:.3f}%')
 
-            correct_domain_target, total_domain_target = 0, 0
+            correct_target_domain, total_target_domain = 0, 0
             for target_images, _ in target_loader_test:
                 target_images = target_images.to(device)
-                target_features = feature_extractor(target_images)
-                target_preds = domain_classifier(target_features, 1)  # lambda_p = 1 (Target 도메인)
-                target_preds = torch.sigmoid(target_preds)
-                predicted_target = (target_preds > 0.5).long()  # 0.5를 기준으로 binary classification
-                total_domain_target += target_images.size(0)
-                correct_domain_target += (predicted_target == 1).sum().item()  # 정확하게 Target 도메인으로 분류된 케이스 카운트
 
-            target_domain_accuracy = correct_domain_target / total_domain_target
+                target_features = feature_extractor(target_images)
+                domain_preds = domain_classifier(target_features, lambda_p=0.0)
+
+                _, predicted_domain_target = torch.max(domain_preds.data, 1)
+                total_target_domain += target_images.size(0)
+                correct_target_domain += (predicted_domain_target == 0).sum().item()
+
+            target_domain_accuracy = correct_target_domain / total_target_domain
             wandb.log({'[Domain] Target Accuracy': target_domain_accuracy}, step=epoch + 1)
             print(f'[Domain] Target Accuracy: {target_domain_accuracy * 100:.3f}%')
 
