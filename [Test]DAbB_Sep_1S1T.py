@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from functions import ReverseLayerF
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
 import numpy as np
@@ -160,8 +160,8 @@ def main():
         feature_extractor.train()
         domain_classifier.train()
         label_classifier.train()
-        i = 0
 
+        i = 0
         loss_domain_epoch = 0
         loss_label_epoch = 0
 
