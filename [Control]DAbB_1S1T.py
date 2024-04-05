@@ -168,7 +168,7 @@ def main():
         list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=args.label_lr
     )
 
-    criterion_d = nn.BCEWithLogitsLoss()
+    criterion_d = nn.CrossEntropyLoss()
     criterion_l = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
@@ -181,6 +181,7 @@ def main():
 
         loss_domain_epoch = 0
         loss_label_epoch = 0
+        total_loss_epoch = 0
 
         for source_data, target_data in zip(source_loader, target_loader):
             p = float(i + epoch * min(len(source_loader), len(target_loader))) / num_epochs / min(len(source_loader), len(target_loader))
@@ -193,14 +194,20 @@ def main():
 
             source_features = feature_extractor(source_images)
             target_features = feature_extractor(target_images)
+            source_dlabel = torch.full(source_features.size(0), 1, dtype=torch.int, device=device)
+            target_dlabel = torch.full(source_features.size(0), 0, dtype=torch.int, device=device)
 
-            images = torch.cat((source_images, target_images), dim=0)
-            features = torch.cat((source_features, target_features), dim=0)
+            combined_features = torch.cat((source_features, target_features), dim=0)
+            combined_dlabel = torch.cat((source_dlabel, target_dlabel), dim=0)
+
+            indices = torch.randperm(combined_features.size(0))
+            combined_features_shuffled = combined_features[indices]
+            combined_dlabel_shuffled = combined_dlabel[indices]
 
             label_preds = label_classifier(source_features)
             label_loss = criterion_l(label_preds, source_labels)
-            domain_preds = domain_classifier(features, lambda_p)
-            domain_loss = criterion_d(domain_preds, images)
+            domain_preds = domain_classifier(combined_features_shuffled, lambda_p)
+            domain_loss = criterion_d(domain_preds, combined_dlabel_shuffled.view(-1,).long())
 
             total_loss = domain_loss + label_loss
 
@@ -212,6 +219,7 @@ def main():
 
             loss_label_epoch += label_loss.item()
             loss_domain_epoch += domain_loss.item()
+            total_loss_epoch += total_loss.item()
 
             i += 1
 
@@ -221,11 +229,13 @@ def main():
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Domain Loss: {loss_domain_epoch:.4f}, '
               f'Label Loss: {loss_label_epoch:.4f}, '
+              f'Total Loss: {total_loss_epoch:.4f}, '
               f'Time: {end_time - start_time:.2f} seconds')
 
         wandb.log({
             'Domain Loss': loss_domain_epoch,
             'Label Loss': loss_label_epoch,
+            'Total Loss': total_loss_epoch,
             'Training Time': end_time - start_time
         })
 
@@ -273,7 +283,7 @@ def main():
                 source_preds = torch.sigmoid(source_preds)
                 predicted_source = (source_preds <= 0.5).long()  # 0.5를 기준으로 binary classification
                 total_domain_source += source_images.size(0)
-                correct_domain_source += (predicted_source == 0).sum().item()  # 정확하게 Source 도메인으로 분류된 케이스 카운트
+                correct_domain_source += (predicted_source == 1).sum().item()  # 정확하게 Source 도메인으로 분류된 케이스 카운트
 
             source_domain_accuracy = correct_domain_source / total_domain_source
             wandb.log({'[Domain] Source Accuracy': source_domain_accuracy}, step=epoch + 1)
@@ -287,7 +297,7 @@ def main():
                 target_preds = torch.sigmoid(target_preds)
                 predicted_target = (target_preds > 0.5).long()  # 0.5를 기준으로 binary classification
                 total_domain_target += target_images.size(0)
-                correct_domain_target += (predicted_target == 1).sum().item()  # 정확하게 Target 도메인으로 분류된 케이스 카운트
+                correct_domain_target += (predicted_target == 0).sum().item()  # 정확하게 Target 도메인으로 분류된 케이스 카운트
 
             target_domain_accuracy = correct_domain_target / total_domain_target
             wandb.log({'[Domain] Target Accuracy': target_domain_accuracy}, step=epoch + 1)
