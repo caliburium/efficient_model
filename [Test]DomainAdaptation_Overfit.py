@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from functions import ReverseLayerF
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
 import numpy as np
@@ -18,42 +18,50 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class FeatureExtractor(nn.Module):
     def __init__(self):
         super(FeatureExtractor, self).__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=5, padding=2, stride=1)
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=5, padding=2, stride=1)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=5, padding=2, stride=1)
         self.relu = nn.ReLU()
 
     def forward(self, x):
         x = self.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)
+        x = F.max_pool2d(x, 3, 2, 1)
         x = self.relu(self.conv2(x))
+        x = F.max_pool2d(x, 3, 2, 1)
+        x = self.relu(self.conv3(x))
         return x
 
 
 class LabelClassifier(nn.Module):
     def __init__(self):
         super(LabelClassifier, self).__init__()
-        self.fc1 = nn.Linear(64 * 16 * 16, 128)
-        self.fc2 = nn.Linear(128, 10)
+        self.fc1 = nn.Linear(128 * 8 * 8, 3072)
+        self.fc2 = nn.Linear(3072, 2048)
+        self.fc3 = nn.Linear(2048, 10)
         self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(p=0.5)
 
     def forward(self, x):
-        x = x.view(-1, 64 * 16 * 16)
-        x = self.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = x.view(-1, 128 * 8 * 8)
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.dropout(self.relu(self.fc2(x)))
+        x = F.softmax(self.fc3(x), dim=1)
         return x
 
 
 class DomainClassifier(nn.Module):
     def __init__(self):
         super(DomainClassifier, self).__init__()
-        self.fc1 = nn.Linear(64 * 16 * 16, 128)
-        self.fc2 = nn.Linear(128, 2)
+        self.fc1 = nn.Linear(128 * 8 * 8, 1024)
+        self.fc2 = nn.Linear(1024, 1024)
+        self.fc3 = nn.Linear(1024, 1)
 
     def forward(self, x, lambda_p):
-        x = x.view(-1, 64 * 16 * 16)
+        x = x.view(-1, 128 * 8 * 8)
         x = ReverseLayerF.apply(x, lambda_p)
         x = torch.relu(self.fc1(x))
-        x = torch.softmax(self.fc2(x), dim=1)
+        x = torch.relu(self.fc2(x))
+        x = torch.sigmoid(self.fc3(x))
         return x
 
 
@@ -61,11 +69,11 @@ def main():
     # MNIST, SVHN, CIFAR10, STL10
     args = argparse.ArgumentParser()
     args.add_argument('--epoch', type=int, default=5000)
-    args.add_argument('--batch_size', type=int, default=2048)
+    args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--source', type=str, default='SVHN')
     args.add_argument('--target', type=str, default='MNIST')
-    args.add_argument('--domain_lr', type=float, default=0.1)
-    args.add_argument('--label_lr', type=float, default=0.1)
+    args.add_argument('--domain_lr', type=float, default=1e-3)
+    args.add_argument('--label_lr', type=float, default=1e-3)
     args = args.parse_args()
 
     num_epochs = args.epoch
@@ -95,8 +103,6 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-
-    # https://pytorch.org/vision/main/generated/torchvision.datasets.EMNIST.html
 
     if args.source == 'MNIST':
         source_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform_mnist)
@@ -139,16 +145,25 @@ def main():
     domain_classifier = DomainClassifier().to(device)
     label_classifier = LabelClassifier().to(device)
 
-    optimizer_domain_classifier = optim.Adam(
-        list(feature_extractor.parameters()) + list(domain_classifier.parameters()), lr=args.domain_lr
-    )
+    optimizer_domain_classifier = optim.SGD(
+        list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=args.domain_lr
+    )  # 초기 학습률 µ0 = 0.01
+
+    # 스케줄러 함수 정의
+    def lr_lambda(progress):
+        µ0 = 0.01
+        α = 10
+        β = 0.75
+        return µ0 * (1 + α * progress) ** (-β)
+
+    # 스케줄러 생성
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer_domain_classifier, lr_lambda)
 
     optimizer_label_classifier = optim.Adam(
         list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=args.label_lr
     )
 
-    criterion_d = nn.CrossEntropyLoss()
-    criterion_l = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
         start_time = time.time()
@@ -184,10 +199,10 @@ def main():
             combined_dlabel_shuffled = combined_dlabel[indices]
 
             label_preds = label_classifier(source_features)
-            label_loss = criterion_l(label_preds, source_labels)
+            label_loss = criterion(label_preds, source_labels)
 
             domain_preds = domain_classifier(combined_features_shuffled, lambda_p)
-            domain_loss = criterion_d(domain_preds, combined_dlabel_shuffled.view(-1,).long())
+            domain_loss = criterion(domain_preds, combined_dlabel_shuffled.view(-1,).long())
 
             total_loss = domain_loss + label_loss
 
@@ -204,13 +219,14 @@ def main():
             i += 1
 
         end_time = time.time()
-
+        print()
         # 결과 출력
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Domain Loss: {loss_domain_epoch:.4f}, '
               f'Label Loss: {loss_label_epoch:.4f}, '
               f'Total Loss: {total_loss_epoch:.4f}, '
-              f'Time: {end_time - start_time:.2f} seconds')
+              f'Time: {end_time - start_time:.2f} seconds'
+              )
 
         wandb.log({
             'Domain Loss': loss_domain_epoch,

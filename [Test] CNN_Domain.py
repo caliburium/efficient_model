@@ -37,7 +37,7 @@ class CNN(nn.Module):
 
 def main():
     args = argparse.ArgumentParser()
-    args.add_argument('--batch_size', type=int, default=256)
+    args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--learning_rate', type=float, default=0.001)
 
     args = args.parse_args()
@@ -47,7 +47,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="[Test] CNN_Domain_S:MNIST_T:SVHN"
+               name="[Test] CNN_Domain_S:SVHN_T:MNIST"
                )
 
     transform_MNIST = transforms.Compose([
@@ -62,13 +62,13 @@ def main():
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
-    mnist_dataset = MNIST(root='./data', train=True, download=True, transform=transform_MNIST)
-    trainloader_mnist = DataLoader(mnist_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+    # mnist_dataset = MNIST(root='./data', train=True, download=True, transform=transform_MNIST)
+    # trainloader_mnist = DataLoader(mnist_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     mnist_test_dataset = MNIST(root='./data', train=False, download=True, transform=transform_MNIST)
     testloader_mnist = DataLoader(mnist_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
-    # svhn_dataset = SVHN(root='./data', split='train', download=True, transform=transform)
-    # trainloader_svhn = DataLoader(svhn_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+    svhn_dataset = SVHN(root='./data', split='train', download=True, transform=transform)
+    trainloader_svhn = DataLoader(svhn_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     svhn_test_dataset = SVHN(root='./data', split='test', download=True, transform=transform)
     testloader_svhn = DataLoader(svhn_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
@@ -78,11 +78,11 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=args.learning_rate)
 
-    for epoch in range(50):
+    for epoch in range(5000):
         net.train()
         running_loss = 0.0
         start_time = time.time()
-        for i, data in enumerate(trainloader_mnist, 0):
+        for i, data in enumerate(trainloader_svhn, 0):
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -92,11 +92,11 @@ def main():
             optimizer.step()
             running_loss += loss.item()
 
-        wandb.log({"Label Loss": running_loss / len(trainloader_mnist)}, step=epoch)
+        wandb.log({"Label Loss": running_loss / len(trainloader_svhn)}, step=epoch)
         end_time = time.time()
         training_time = end_time - start_time
         wandb.log({"Training Time": training_time}, step=epoch)
-        print('[%d] loss: %.3f, training time: %.3f seconds' % (epoch + 1, running_loss / len(trainloader_mnist), training_time))
+        print('[%d] loss: %.3f, training time: %.3f seconds' % (epoch + 1, running_loss / len(trainloader_svhn), training_time))
         net.eval()
 
         def tester(loader, dataset):
@@ -113,8 +113,8 @@ def main():
             print('[Label] ' + dataset + f'Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            tester(testloader_mnist, "Source_ ")
-            tester(testloader_svhn, "Target ")
+            tester(testloader_svhn, "Source ")
+            tester(testloader_mnist, "Target ")
 
     wandb.finish()
 

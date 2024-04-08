@@ -64,8 +64,8 @@ class DomainClassifier(nn.Module):
 def main():
     # MNIST, SVHN, CIFAR10, STL10
     args = argparse.ArgumentParser()
-    args.add_argument('--epoch', type=int, default=100)
-    args.add_argument('--batch_size', type=int, default=256)
+    args.add_argument('--epoch', type=int, default=2000)
+    args.add_argument('--batch_size', type=int, default=128)
     args.add_argument('--source', type=str, default='SVHN')
     args.add_argument('--target', type=str, default='MNIST')
     args.add_argument('--domain_lr', type=float, default=0.001)
