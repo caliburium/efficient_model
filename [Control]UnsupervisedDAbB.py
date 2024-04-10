@@ -55,12 +55,22 @@ class DomainClassifier(nn.Module):
         self.fc2 = nn.Linear(1024, 1024)
         self.fc3 = nn.Linear(1024, 2)
 
+        # they used 100-2 for mnist dataset
+        self.fc1 = nn.Linear(128 * 8 * 8, 100)
+        self.fc2 = nn.Linear(100, 2)
+
+
     def forward(self, x, lambda_p):
         x = x.view(-1, 128 * 8 * 8)
         x = ReverseLayerF.apply(x, lambda_p)
+        # x = torch.relu(self.fc1(x))
+        # x = torch.relu(self.fc2(x))
+        # x = torch.sigmoid(self.fc3(x))
+
+        # they used 100-2 for mnist dataset
         x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = torch.sigmoid(self.fc3(x))
+        x = torch.sigmoid(self.fc2(x))
+
         return x
 
 
