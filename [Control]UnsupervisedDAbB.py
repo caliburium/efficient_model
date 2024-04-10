@@ -76,11 +76,11 @@ def main():
     num_epochs = args.epoch
 
     # Initialize Weights and Biases
-    # wandb.init(project="Efficient_Model_Research",
-    #            entity="hails",
-    #            config=args.__dict__,
-    #            name="[Control] DAbB_S:" + args.source + "_T:" + args.target + "_OverFit"
-    #            )
+    wandb.init(project="Efficient_Model_Research",
+               entity="hails",
+               config=args.__dict__,
+               name="[DK] DAbB_S:" + args.source + "_T:" + args.target + "_OverFit"
+               )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
     target_loader, target_loader_test = data_loader(args.target, args.batch_size)
@@ -204,12 +204,12 @@ def main():
               f'Time: {end_time - start_time:.2f} seconds'
               )
 
-        # wandb.log({
-        #     'Domain Loss': loss_domain_epoch,
-        #     'Label Loss': loss_label_epoch,
-        #     'Total Loss': total_loss_epoch,
-        #     'Training Time': end_time - start_time
-        # })
+        wandb.log({
+            'Domain Loss': loss_domain_epoch,
+            'Label Loss': loss_label_epoch,
+            'Total Loss': total_loss_epoch,
+            'Training Time': end_time - start_time
+        })
 
         # 테스트
         feature_extractor.eval()
@@ -229,7 +229,7 @@ def main():
                 correct += (predicted == labels).sum().item()
 
             accuracy = correct / total
-            # wandb.log({'[Label] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
+            wandb.log({'[Label] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
             print('[Label] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
         def dc_tester(loader, group, d_label):
@@ -245,7 +245,7 @@ def main():
                 correct += (predicted == d_label).sum().item()
 
             accuracy = correct / total
-            # wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
+            wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
             print('[Domain] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
