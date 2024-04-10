@@ -8,6 +8,7 @@ from data_loader import data_loader
 import numpy as np
 import wandb
 import time
+from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device = 'cpu'
@@ -75,11 +76,11 @@ def main():
     num_epochs = args.epoch
 
     # Initialize Weights and Biases
-    wandb.init(project="Efficient_Model_Research",
-               entity="hails",
-               config=args.__dict__,
-               name="[Control] DAbB_S:" + args.source + "_T:" + args.target + "_OverFit"
-               )
+    # wandb.init(project="Efficient_Model_Research",
+    #            entity="hails",
+    #            config=args.__dict__,
+    #            name="[Control] DAbB_S:" + args.source + "_T:" + args.target + "_OverFit"
+    #            )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
     target_loader, target_loader_test = data_loader(args.target, args.batch_size)
@@ -90,17 +91,9 @@ def main():
     domain_classifier = DomainClassifier().to(device)
     label_classifier = LabelClassifier().to(device)
 
-    optimizer_feature_extractor = optim.SGD(
-        list(feature_extractor.parameters())
-        + list(label_classifier.parameters())
-        + list(domain_classifier.parameters()),
-        lr=0.01, momentum=0.9
-    )
+    optimizer_domain_classifier = optim.SGD(list(feature_extractor.parameters()) + list(domain_classifier.parameters()), lr=0.01, momentum=0.9)
+    optimizer_label_classifier = optim.SGD(list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=0.01, momentum=0.9)
 
-    optimizer_domain_classifier = optim.SGD(list(domain_classifier.parameters()), lr=0.01, momentum=0.9)
-    optimizer_label_classifier = optim.SGD(list(label_classifier.parameters()), lr=0.01, momentum=0.9)
-
-    scheduler_f = optim.lr_scheduler.LambdaLR(optimizer_feature_extractor, lr_lambda)
     scheduler_d = optim.lr_scheduler.LambdaLR(optimizer_domain_classifier, lr_lambda)
     scheduler_l = optim.lr_scheduler.LambdaLR(optimizer_label_classifier, lr_lambda)
     criterion = nn.CrossEntropyLoss()
@@ -117,7 +110,7 @@ def main():
         loss_label_epoch = 0
         total_loss_epoch = 0
 
-        for source_data, target_data in zip(source_loader, target_loader):
+        for source_data, target_data in zip(source_loader, tqdm(target_loader)):
             p = (float(i + epoch * min(len(source_loader), len(target_loader))) /
                  num_epochs / min(len(source_loader), len(target_loader)))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
@@ -127,41 +120,77 @@ def main():
             target_images, _ = target_data
             target_images = target_images.to(device)
 
-            source_features = feature_extractor(source_images)
-            target_features = feature_extractor(target_images)
-            source_dlabel = torch.full((source_features.size(0), 1), 1, dtype=torch.int, device=device)
-            target_dlabel = torch.full((target_features.size(0), 1), 0, dtype=torch.int, device=device)
-
-            combined_features = torch.cat((source_features, target_features), dim=0)
+            # combined source and target data
+            source_dlabel = torch.full((source_images.size(0), 1), 1, dtype=torch.int, device=device)
+            target_dlabel = torch.full((target_images.size(0), 1), 0, dtype=torch.int, device=device)
+            combined_data = torch.cat((source_images, target_images), dim=0)
             combined_dlabel = torch.cat((source_dlabel, target_dlabel), dim=0)
 
-            indices = torch.randperm(combined_features.size(0))
-            combined_features_shuffled = combined_features[indices]
-            combined_dlabel_shuffled = combined_dlabel[indices]
+            # training of domain classifier
+            combined_features = feature_extractor(combined_data)
+            combined_dlabel = combined_dlabel.view(-1,).long()
 
-            label_preds = label_classifier(source_features)
+            domain_preds = domain_classifier(combined_features, lambda_p)
+            domain_loss = criterion(domain_preds, combined_dlabel)
+
+            optimizer_domain_classifier.zero_grad()
+            domain_loss.backward()
+            optimizer_domain_classifier.step()
+
+            # training of label classifier
+            features = feature_extractor(source_images)
+            label_preds = label_classifier(features)
             label_loss = criterion(label_preds, source_labels)
 
-            domain_preds = domain_classifier(combined_features_shuffled, lambda_p)
-            domain_loss = criterion(domain_preds, combined_dlabel_shuffled.view(-1,).long())
-
-            total_loss = domain_loss + label_loss
-
-            optimizer_feature_extractor.zero_grad()
             optimizer_label_classifier.zero_grad()
-            optimizer_domain_classifier.zero_grad()
-            total_loss.backward()
-            optimizer_feature_extractor.step()
+            label_loss.backward()
             optimizer_label_classifier.step()
-            optimizer_domain_classifier.step()
+
+            # source_features = feature_extractor(source_images)
+            # target_features = feature_extractor(target_images)
+            # source_dlabel = torch.full((source_features.size(0), 1), 1, dtype=torch.int, device=device)
+            # target_dlabel = torch.full((target_features.size(0), 1), 0, dtype=torch.int, device=device)
+            #
+            # combined_features = torch.cat((source_features, target_features), dim=0)
+            # combined_dlabel = torch.cat((source_dlabel, target_dlabel), dim=0)
+            #
+            # indices = torch.randperm(combined_features.size(0))
+            # combined_features_shuffled = combined_features[indices]
+            # combined_dlabel_shuffled = combined_dlabel[indices]
+            #
+            # domain_preds = domain_classifier(combined_features_shuffled, lambda_p)
+            # domain_loss = criterion(domain_preds, combined_dlabel_shuffled.view(-1,).long())
+            #
+            # optimizer_domain_classifier.zero_grad()
+            # domain_loss.backward()
+            # optimizer_domain_classifier.step()
+            #
+            # label_preds = label_classifier(source_features)
+            # label_loss = criterion(label_preds, source_labels)
+            #
+            # optimizer_label_classifier.zero_grad()
+            # label_loss.backward()
+            # optimizer_label_classifier.step()
+
+            total_loss = label_loss + domain_loss
 
             loss_label_epoch += label_loss.item()
             loss_domain_epoch += domain_loss.item()
             total_loss_epoch += total_loss.item()
 
+            label_acc = (torch.argmax(label_preds, dim=1) == source_labels).sum().item() / source_labels.size(0)
+            domain_acc = (torch.argmax(domain_preds, dim=1) == combined_dlabel).sum().item() / combined_dlabel.size(0)
+
+            print(f'Batches [{i + 1}/{min(len(source_loader), len(target_loader))}], '
+                    f'Domain Loss: {domain_loss.item():.4f}, '
+                    f'Label Loss: {label_loss.item():.4f}, '
+                    f'Total Loss: {total_loss.item():.4f}, '
+                    f'Label Accuracy: {label_acc * 100:.3f}%, '
+                    f'Domain Accuracy: {domain_acc * 100:.3f}%'
+                    )
+
             i += 1
 
-        scheduler_f.step()
         scheduler_d.step()
         scheduler_l.step()
 
@@ -175,12 +204,12 @@ def main():
               f'Time: {end_time - start_time:.2f} seconds'
               )
 
-        wandb.log({
-            'Domain Loss': loss_domain_epoch,
-            'Label Loss': loss_label_epoch,
-            'Total Loss': total_loss_epoch,
-            'Training Time': end_time - start_time
-        })
+        # wandb.log({
+        #     'Domain Loss': loss_domain_epoch,
+        #     'Label Loss': loss_label_epoch,
+        #     'Total Loss': total_loss_epoch,
+        #     'Training Time': end_time - start_time
+        # })
 
         # 테스트
         feature_extractor.eval()
@@ -200,7 +229,7 @@ def main():
                 correct += (predicted == labels).sum().item()
 
             accuracy = correct / total
-            wandb.log({'[Label] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
+            # wandb.log({'[Label] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
             print('[Label] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
         def dc_tester(loader, group, d_label):
@@ -216,7 +245,7 @@ def main():
                 correct += (predicted == d_label).sum().item()
 
             accuracy = correct / total
-            wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
+            # wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
             print('[Domain] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
