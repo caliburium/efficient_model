@@ -92,7 +92,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="[DK] DAbB_S:" + args.source + "_T:" + args.target + "_OverFit"
+               name="DAbB_S:" + str(args.batch_size) + "_D:" + str(args.lr_domain) + "_C:" + str(args.lr_class)
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
