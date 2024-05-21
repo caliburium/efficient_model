@@ -51,9 +51,9 @@ class LabelClassifier(nn.Module):
 class DomainClassifier(nn.Module):
     def __init__(self):
         super(DomainClassifier, self).__init__()
-        self.fc1 = nn.Linear(128 * 8 * 8, 1024)
-        self.fc2 = nn.Linear(1024, 1024)
-        self.fc3 = nn.Linear(1024, 2)
+        # self.fc1 = nn.Linear(128 * 8 * 8, 1024)
+        # self.fc2 = nn.Linear(1024, 1024)
+        # self.fc3 = nn.Linear(1024, 2)
 
         # they used 100-2 for mnist dataset
         self.fc1 = nn.Linear(128 * 8 * 8, 100)
@@ -81,8 +81,8 @@ def main():
     args.add_argument('--batch_size', type=int, default=50)
     args.add_argument('--source', type=str, default='SVHN')
     args.add_argument('--target', type=str, default='MNIST')
-    args.add_argument('--lr_domain', type=float, default=0.01)
-    args.add_argument('--lr_class', type=float, default=0.1)
+    args.add_argument('--lr_domain', type=float, default=0.02)
+    args.add_argument('--lr_class', type=float, default=0.2)
 
     args = args.parse_args()
 
@@ -92,7 +92,9 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="DAbB_S:" + str(args.batch_size) + "_D:" + str(args.lr_domain) + "_C:" + str(args.lr_class)
+               name="DAbB_S:" + args.source + "_T:" + args.target
+                    + "_lr(C)" + str(args.lr_class) + "_lr(D)" + str(args.lr_domain)
+                    + "_Batch:" + str(args.batch_size)
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
@@ -104,8 +106,10 @@ def main():
     domain_classifier = DomainClassifier().to(device)
     label_classifier = LabelClassifier().to(device)
 
-    optimizer_domain_classifier = optim.SGD(list(feature_extractor.parameters()) + list(domain_classifier.parameters()), lr=args.lr_domain, momentum=0.9)
-    optimizer_label_classifier = optim.SGD(list(feature_extractor.parameters()) + list(label_classifier.parameters()), lr=args.lr_class, momentum=0.9)
+    optimizer_domain_classifier = optim.SGD(list(feature_extractor.parameters())
+                                            + list(domain_classifier.parameters()), lr=args.lr_domain, momentum=0.9)
+    optimizer_label_classifier = optim.SGD(list(feature_extractor.parameters())
+                                           + list(label_classifier.parameters()), lr=args.lr_class, momentum=0.9)
 
     scheduler_d = optim.lr_scheduler.LambdaLR(optimizer_domain_classifier, lr_lambda)
     scheduler_l = optim.lr_scheduler.LambdaLR(optimizer_label_classifier, lr_lambda)

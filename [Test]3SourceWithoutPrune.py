@@ -65,9 +65,9 @@ def main():
     args = argparse.ArgumentParser()
     args.add_argument('--epoch', type=int, default=1000)
     args.add_argument('--batch_size', type=int, default=50)
-    args.add_argument('--source1', type=str, default='MNIST')
+    args.add_argument('--source1', type=str, default='CIFAR10')
     args.add_argument('--source2', type=str, default='SVHN')
-    args.add_argument('--source3', type=str, default='CIFAR10')
+    args.add_argument('--source3', type=str, default='STL10')
     args.add_argument('--lr_domain', type=float, default=0.02)
     args.add_argument('--lr_class', type=float, default=0.2)
 
@@ -79,7 +79,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="[Test]3Source:" + str(args.batch_size) + "_D:" + str(args.lr_domain) + "_C:" + str(args.lr_class)
+               name="[Test]NoPrune_S1:" + args.source1 + "_S2:" + args.source2 + "_S3:" + args.source3
                )
 
     source1_loader, source1_loader_test = data_loader(args.source1, args.batch_size)

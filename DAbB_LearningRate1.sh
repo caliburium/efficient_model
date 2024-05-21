@@ -4,12 +4,9 @@
 
 # python Control_CNN.py --mode combine --channel 64 --linear 20
 
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.01 --lr_class 0.1
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.01 --lr_class 0.15
-# python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.01 --lr_class 0.2
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.02 --lr_class 0.1
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.02 --lr_class 0.15
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.02 --lr_class 0.2
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.005 --lr_class 0.05
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.005 --lr_class 0.1
-python [Control]UnsupervisedDAbB.py --batch_size 50 --lr_domain 0.005 --lr_class 0.15
+# python [Control]UnsupervisedDAbB.py --source SVHN_BW --target MNIST_RS --batch_size 50 --lr_domain 0.01 --lr_class 0.25
+# python [Control]UnsupervisedDAbB.py --source SVHN_BW --target MNIST --batch_size 50 --lr_domain 0.01 --lr_class 0.25
+# python [Control]UnsupervisedDAbB.py --source SVHN --target MNIST_RS --batch_size 50 --lr_domain 0.02 --lr_class 0.2
+python [Control]UnsupervisedDAbB.py --source CIFAR10 --target STL10 --batch_size 50 --lr_domain 2 --lr_class 5
+python [Control]UnsupervisedDAbB.py --source STL10 --target CIFAR10 --batch_size 50 --lr_domain 0.01 --lr_class 0.1
+
