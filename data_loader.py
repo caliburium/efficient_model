@@ -35,7 +35,7 @@ def data_loader(source, batch_size):
     ])
 
     transform_mnist_rs = transforms.Compose([
-        transforms.Resize((32, 32), interpolation=InterpolationMode.LANCZOS),
+        transforms.Resize((32, 32)),
         transforms.Grayscale(num_output_channels=3),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
@@ -70,7 +70,7 @@ def data_loader(source, batch_size):
     else:
         print("no source")
 
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    test_loader = DataLoader(dataset_test, batch_size=batch_size, shuffle=True, num_workers=4)
+    loader = DataLoader(dataset, batch_size=batch_size, drop_last=True, shuffle=True, num_workers=8)
+    test_loader = DataLoader(dataset_test, batch_size=batch_size, drop_last=True, shuffle=True, num_workers=8)
 
     return loader, test_loader

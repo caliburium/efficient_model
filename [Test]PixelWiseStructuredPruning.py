@@ -3,16 +3,25 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import torch.nn.utils.prune as prune
-from functions import ReverseLayerF, lr_lambda
 from data_loader import data_loader
-import numpy as np
 import wandb
 import time
-from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device = 'cpu'
+
+
+class PixelWiseStructuredPruning(nn.Module):
+    def __init__(self, threshold):
+        super(PixelWiseStructuredPruning, self).__init__()
+        self.threshold = threshold
+
+    def forward(self, x):
+        importance_scores = torch.abs(x)
+        mask = importance_scores > self.threshold
+        pruned_x = x * mask.float()
+
+        return pruned_x, mask
 
 
 class FeatureExtractor(nn.Module):
@@ -32,25 +41,10 @@ class FeatureExtractor(nn.Module):
         return x
 
 
-class LabelClassifier(nn.Module):
-    def __init__(self):
-        super(LabelClassifier, self).__init__()
-        self.fc1 = nn.Linear(128 * 8 * 8, 1024)
-        self.fc2 = nn.Linear(1024, 10)
-        self.relu = nn.ReLU()
-        # self.dropout = nn.Dropout(p=0.0)
-
-    def forward(self, x):
-        x = x.view(-1, 128 * 8 * 8)
-        # x = self.dropout(self.relu(self.fc1(x)))
-        x = self.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
-
-
 class DomainClassifier(nn.Module):
-    def __init__(self):
+    def __init__(self, threshold):
         super(DomainClassifier, self).__init__()
+        self.pruning_layer = PixelWiseStructuredPruning(threshold)
         self.fc1 = nn.Linear(128 * 8 * 8, 1024)
         self.fc2 = nn.Linear(1024, 3)
         self.relu = nn.ReLU()
@@ -58,21 +52,37 @@ class DomainClassifier(nn.Module):
     def forward(self, x):
         x = x.view(-1, 128 * 8 * 8)
         x = self.relu(self.fc1(x))
+        x, mask = self.pruning_layer(x)
         x = self.fc2(x)
+        return x, mask
 
+
+class LabelClassifier(nn.Module):
+    def __init__(self):
+        super(LabelClassifier, self).__init__()
+        self.fc1 = nn.Linear(128 * 8 * 8, 1024)
+        self.fc2 = nn.Linear(1024, 10)
+        self.relu = nn.ReLU()
+
+    def forward(self, x, mask):
+        mask = mask.view(-1, 128 * 8 * 8)  # Adjust mask size
+        x = self.relu(self.fc1(x))
+        x = x.view(-1, 128 * 8 * 8) * mask.float()
+        x = self.fc2(x)
         return x
 
 
 def main():
     # MNIST, SVHN, CIFAR10, STL10
     args = argparse.ArgumentParser()
-    args.add_argument('--epoch', type=int, default=1000)
+    args.add_argument('--epoch', type=int, default=100)
     args.add_argument('--batch_size', type=int, default=50)
     args.add_argument('--source1', type=str, default='MNIST')
     args.add_argument('--source2', type=str, default='SVHN')
     args.add_argument('--source3', type=str, default='CIFAR10')
-    args.add_argument('--lr_domain', type=float, default=0.02)
-    args.add_argument('--lr_class', type=float, default=0.2)
+    args.add_argument('--lr_domain', type=float, default=0.01)
+    args.add_argument('--lr_class', type=float, default=0.1)
+    args.add_argument('--threshold', type=float, default=0.5)
 
     args = args.parse_args()
 
@@ -82,7 +92,7 @@ def main():
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="FPBD:" + str(args.batch_size) + "_D:" + str(args.lr_domain) + "_C:" + str(args.lr_class)
+               name="TestNN_Batch:" + str(args.batch_size) + "_T:" + str(args.threshold) + "_D:" + str(args.lr_domain) + "_C:" + str(args.lr_class)
                )
 
     source1_loader, source1_loader_test = data_loader(args.source1, args.batch_size)
@@ -92,7 +102,7 @@ def main():
     print("data load complete, start training")
 
     feature_extractor = FeatureExtractor().to(device)
-    domain_classifier = DomainClassifier().to(device)
+    domain_classifier = DomainClassifier(args.threshold).to(device)
     label_classifier = LabelClassifier().to(device)
 
     # optimizer_domain_classifier = optim.SGD(list(feature_extractor.parameters())
@@ -142,24 +152,20 @@ def main():
             # combined_features_shuffled = combined_features[indices]
             # combined_domain_shuffled = combined_domain[indices]
 
-            domain_preds = domain_classifier(combined_features)
-            domain_preds = F.log_softmax(domain_preds, dim=1)
+            domain_preds, mask = domain_classifier(combined_features)
             domain_loss = criterion(domain_preds, combined_domain)
 
-            optimizer_domain_classifier.zero_grad()
-            domain_loss.backward()
-            optimizer_domain_classifier.step()
-
             # training of label classifier
-            label_preds = label_classifier(combined_features)
-            label_preds = F.log_softmax(label_preds, dim=1)
+            label_preds = label_classifier(combined_features, mask)
             label_loss = criterion(label_preds, combined_label)
 
-            optimizer_label_classifier.zero_grad()
-            label_loss.backward()
-            optimizer_label_classifier.step()
-
             total_loss = label_loss + domain_loss
+
+            optimizer_domain_classifier.zero_grad()
+            optimizer_label_classifier.zero_grad()
+            total_loss.backward()
+            optimizer_label_classifier.step()
+            optimizer_domain_classifier.step()
 
             loss_label_epoch += label_loss.item()
             loss_domain_epoch += domain_loss.item()
@@ -206,7 +212,7 @@ def main():
                 images, labels = images.to(device), labels.to(device)
 
                 features = feature_extractor(images)
-                preds = label_classifier(features)
+                preds = label_classifier(features, torch.ones(features.size(), device=device))
                 preds = F.log_softmax(preds, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
@@ -223,7 +229,7 @@ def main():
                 images = images.to(device)
 
                 features = feature_extractor(images)
-                preds = domain_classifier(features, lambda_p=0.0)
+                preds, _ = domain_classifier(features)
                 preds = F.log_softmax(preds, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
@@ -235,12 +241,12 @@ def main():
             print('[Domain] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            lc_tester(source1_loader_test, 'Source1')
-            lc_tester(source2_loader_test, 'Source2')
-            lc_tester(source3_loader_test, 'Source3')
-            dc_tester(source1_loader_test, 'Source1', 0)
-            dc_tester(source2_loader_test, 'Source2', 1)
-            dc_tester(source3_loader_test, 'Source3', 2)
+            lc_tester(source1_loader_test, args.source1)
+            lc_tester(source2_loader_test, args.source2)
+            lc_tester(source3_loader_test, args.source3)
+            dc_tester(source1_loader_test, args.source1, 0)
+            dc_tester(source2_loader_test, args.source2, 1)
+            dc_tester(source3_loader_test, args.source3, 2)
 
 
 if __name__ == '__main__':

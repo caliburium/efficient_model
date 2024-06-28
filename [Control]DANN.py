@@ -11,12 +11,11 @@ import time
 from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# device = 'cpu'
 
 
-class DaNN(nn.Module):
+class DANN(nn.Module):
     def __init__(self):
-        super(DaNN, self).__init__()
+        super(DANN, self).__init__()
         self.restored = False
 
         self.feature = nn.Sequential(
@@ -53,7 +52,7 @@ class DaNN(nn.Module):
             nn.Linear(256, 2)
         )
 
-    def forward(self, input_data, alpha = 1.0):
+    def forward(self, input_data, alpha=1.0):
         input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
         feature = self.feature(input_data)
         feature = feature.view(-1, 128 * 1 * 1)
@@ -64,164 +63,160 @@ class DaNN(nn.Module):
 
 
 def main():
-    args = argparse.ArgumentParser()
-    args.add_argument('--epoch', type=int, default=200)
-    args.add_argument('--batch_size', type=int, default=128)
-    args.add_argument('--source', type=str, default='SVHN')
-    args.add_argument('--target', type=str, default='MNIST')
-    args.add_argument('--lr', type=float, default=0.01)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--epoch', type=int, default=200)
+    parser.add_argument('--pretrain_epoch', type=int, default=30)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--source', type=str, default='SVHN')
+    parser.add_argument('--target', type=str, default='MNIST')
+    parser.add_argument('--lr', type=float, default=0.01)
+    args = parser.parse_args()
 
-    args = args.parse_args()
-
+    pre_epochs = args.pretrain_epoch
     num_epochs = args.epoch
 
     # Initialize Weights and Biases
     wandb.init(project="Efficient_Model_Research",
                entity="hails",
                config=args.__dict__,
-               name="DAbB_S:" + args.source + "_T:" + args.target
-                    + "_lr(C)" + str(args.lr_class) + "_lr(D)" + str(args.lr_domain)
-                    + "_Batch:" + str(args.batch_size)
+               name="DANN_S:" + args.source + "_T:" + args.target
+                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
     target_loader, target_loader_test = data_loader(args.target, args.batch_size)
 
-    print("data load complete, start training")
+    print("Data load complete, start training")
 
-    DaNN = DaNN().to(device)
+    model = DANN().to(device)
 
-    optimizer_domain_classifier = optim.SGD(list(DomainAdaptationNN.parameters()), lr=args.lr_domain, momentum=0.9)
-
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer_label_classifier, lr_lambda)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
+
+    for epoch in range(pre_epochs):
+        model.train()
+        i = 0
+
+        for source_data in source_loader:
+            p = (float(i + epoch * len(source_loader)) / num_epochs / len(source_loader))
+            lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
+
+            # Training with source data
+            source_images, source_labels = source_data
+            source_images, source_labels = source_images.to(device), source_labels.to(device)
+
+            class_output, _ = model(source_images, alpha=lambda_p)
+            loss = criterion(class_output, source_labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
+
+            print(f'Batches [{i + 1}/{len(source_loader)}], '
+                  f'Pretrain Loss: {loss.item():.4f}, '
+                  f'Pretrain Accuracy: {label_acc * 100:.3f}%, '
+                  )
+
+            i += 1
+
+        scheduler.step()
+        model.eval()
 
     for epoch in range(num_epochs):
         start_time = time.time()
 
-        DomainAdaptationNN.train()
+        model.train()
         i = 0
 
-        loss_domain_epoch = 0
+        loss_tgt_domain_epoch = 0
+        loss_src_domain_epoch = 0
         loss_label_epoch = 0
-        total_loss_epoch = 0
 
         for source_data, target_data in zip(source_loader, tqdm(target_loader)):
             p = (float(i + epoch * min(len(source_loader), len(target_loader))) /
                  num_epochs / min(len(source_loader), len(target_loader)))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
+            # Training with source data
             source_images, source_labels = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
+
+            class_output, _ = model(source_images, alpha=lambda_p)
+            label_loss = criterion(class_output, source_labels)
+
+            optimizer.zero_grad()
+
+            loss_label_epoch += label_loss.item()
+
+            _, domain_output = model(source_images, alpha=lambda_p)
+            source_dlabel = torch.full((source_images.size(0),), 1, dtype=torch.long, device=device)
+
+            domain_src_loss = criterion(domain_output, source_dlabel)
+
+            loss_src_domain_epoch += domain_src_loss.item()
+
+
+            # Training with target data
             target_images, _ = target_data
             target_images = target_images.to(device)
 
-            # combined source and target data
-            source_dlabel = torch.full((source_images.size(0), 1), 1, dtype=torch.int, device=device)
-            target_dlabel = torch.full((target_images.size(0), 1), 0, dtype=torch.int, device=device)
-            combined_data = torch.cat((source_images, target_images), dim=0)
-            combined_dlabel = torch.cat((source_dlabel, target_dlabel), dim=0)
+            _, domain_output = model(target_images, alpha=lambda_p)
+            target_dlabel = torch.full((target_images.size(0),), 0, dtype=torch.long, device=device)
 
-            # training of domain classifier
-            combined_features = feature_extractor(combined_data)
-            combined_dlabel = combined_dlabel.view(-1,).long()
+            domain_tgt_loss = criterion(domain_output, target_dlabel)
 
-            domain_preds = domain_classifier(combined_features, lambda_p)
-            domain_preds = F.log_softmax(domain_preds, dim=1)
-            domain_loss = criterion(domain_preds, combined_dlabel)
 
-            optimizer_domain_classifier.zero_grad()
-            domain_loss.backward()
-            optimizer_domain_classifier.step()
+            loss  = domain_tgt_loss+domain_src_loss+label_loss
 
-            # training of label classifier
-            features = feature_extractor(source_images)
-            label_preds = label_classifier(features)
-            label_preds = F.log_softmax(label_preds, dim=1)
-            label_loss = criterion(label_preds, source_labels)
 
-            optimizer_label_classifier.zero_grad()
-            label_loss.backward()
-            optimizer_label_classifier.step()
+            loss.backward()
+            optimizer.step()
 
-            # source_features = feature_extractor(source_images)
-            # target_features = feature_extractor(target_images)
-            # source_dlabel = torch.full((source_features.size(0), 1), 1, dtype=torch.int, device=device)
-            # target_dlabel = torch.full((target_features.size(0), 1), 0, dtype=torch.int, device=device)
-            #
-            # combined_features = torch.cat((source_features, target_features), dim=0)
-            # combined_dlabel = torch.cat((source_dlabel, target_dlabel), dim=0)
-            #
-            # indices = torch.randperm(combined_features.size(0))
-            # combined_features_shuffled = combined_features[indices]
-            # combined_dlabel_shuffled = combined_dlabel[indices]
-            #
-            # domain_preds = domain_classifier(combined_features_shuffled, lambda_p)
-            # domain_loss = criterion(domain_preds, combined_dlabel_shuffled.view(-1,).long())
-            #
-            # optimizer_domain_classifier.zero_grad()
-            # domain_loss.backward()
-            # optimizer_domain_classifier.step()
-            #
-            # label_preds = label_classifier(source_features)
-            # label_loss = criterion(label_preds, source_labels)
-            #
-            # optimizer_label_classifier.zero_grad()
-            # label_loss.backward()
-            # optimizer_label_classifier.step()
+            loss_tgt_domain_epoch += domain_tgt_loss.item()
 
-            total_loss = label_loss + domain_loss
-
-            loss_label_epoch += label_loss.item()
-            loss_domain_epoch += domain_loss.item()
-            total_loss_epoch += total_loss.item()
-
-            label_acc = (torch.argmax(label_preds, dim=1) == source_labels).sum().item() / source_labels.size(0)
-            domain_acc = (torch.argmax(domain_preds, dim=1) == combined_dlabel).sum().item() / combined_dlabel.size(0)
+            label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
+            domain_acc = (torch.argmax(domain_output, dim=1) == target_dlabel).sum().item() / target_dlabel.size(0)
 
             print(f'Batches [{i + 1}/{min(len(source_loader), len(target_loader))}], '
-                    f'Domain Loss: {domain_loss.item():.4f}, '
-                    f'Label Loss: {label_loss.item():.4f}, '
-                    f'Total Loss: {total_loss.item():.4f}, '
-                    f'Label Accuracy: {label_acc * 100:.3f}%, '
-                    f'Domain Accuracy: {domain_acc * 100:.3f}%'
-                    )
+                  f'Domain source Loss: {domain_src_loss.item():.4f}, '
+                  f'Domain target Loss: {domain_tgt_loss.item():.4f}, '
+                  f'Label Loss: {label_loss.item():.4f}, '
+                  f'Label Accuracy: {label_acc * 100:.3f}%, '
+                  f'Domain Accuracy: {domain_acc * 100:.3f}%')
 
             i += 1
 
-        scheduler_d.step()
-        scheduler_l.step()
+        scheduler.step()
 
         end_time = time.time()
-        print()
-        # 결과 출력
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
-              f'Domain Loss: {loss_domain_epoch:.4f}, '
+              f'Domain source Loss: {loss_src_domain_epoch:.4f}, '
+              f'Domain target Loss: {loss_tgt_domain_epoch:.4f}, '
               f'Label Loss: {loss_label_epoch:.4f}, '
-              f'Total Loss: {total_loss_epoch:.4f}, '
+              f'Total Loss: {loss_src_domain_epoch + loss_tgt_domain_epoch  + loss_label_epoch:.4f}, '
               f'Time: {end_time - start_time:.2f} seconds'
               )
 
         wandb.log({
-            'Domain Loss': loss_domain_epoch,
+            'Domain source Loss': loss_src_domain_epoch,
+            'Domain target Loss': loss_tgt_domain_epoch,
             'Label Loss': loss_label_epoch,
-            'Total Loss': total_loss_epoch,
+            'Total Loss': loss_src_domain_epoch + loss_tgt_domain_epoch + loss_label_epoch,
             'Training Time': end_time - start_time
         })
 
-        # 테스트
-        feature_extractor.eval()
-        label_classifier.eval()
-        domain_classifier.eval()
+        model.eval()
 
         def lc_tester(loader, group):
             correct, total = 0, 0
             for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
 
-                features = feature_extractor(images)
-                preds = label_classifier(features)
-                preds = F.log_softmax(preds, dim=1)
+                class_output, _ = model(images, alpha=0.0)
+                preds = F.log_softmax(class_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
                 total += labels.size(0)
@@ -236,9 +231,8 @@ def main():
             for images, _ in loader:
                 images = images.to(device)
 
-                features = feature_extractor(images)
-                preds = domain_classifier(features, lambda_p=0.0)
-                preds = F.log_softmax(preds, dim=1)
+                _, domain_output = model(images, alpha=0.0)
+                preds = F.log_softmax(domain_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
                 total += images.size(0)
