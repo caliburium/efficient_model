@@ -49,9 +49,9 @@ class DANN(nn.Module):
     def forward(self, input_data, alpha=1.0, discriminator=1):
         input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
         feature = self.feature(input_data)
-        feature = feature.view(feature.size(0),-1)
+        feature = feature.view(feature.size(0), -1)
         class_output = self.classifier(feature)
-        if discriminator == 1 :
+        if discriminator == 1:
             reverse_feature = ReverseLayerF.apply(feature, alpha)
             domain_output = self.discriminator(reverse_feature)
         elif discriminator == 0:
@@ -61,24 +61,24 @@ class DANN(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--pretrain_epoch', type=int, default=100)
+    parser.add_argument('--epoch', type=int, default=50)
+    parser.add_argument('--pretrain_epoch', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=256)
     parser.add_argument('--source', type=str, default='SVHN')
     parser.add_argument('--target', type=str, default='MNIST')
-    parser.add_argument('--pre_lr', type=float, default=0.025)
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--pre_lr', type=float, default=0.05)
+    parser.add_argument('--lr', type=float, default=0.05)
+    parser.add_argument('--dis_lr', type=float, default=0.01)
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch
     num_epochs = args.epoch
 
-    # Initialize Weights and Biases
     wandb.init(project="EM_Domain",
                entity="hails",
                config=args.__dict__,
-               name="DANN_Pre_S:" + args.source + "_T:" + args.target
-                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="DANN_Pre_lr:" + str(args.pre_lr) + "_lr:" + str(args.lr) + "_dis_lr:" + str(args.dis_lr)
+                    + "_Batch:" + str(args.batch_size)
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
@@ -90,8 +90,12 @@ def main():
 
     # pre_opt = optim.Adam(model.parameters(), lr=0.1)
     pre_opt = optim.SGD(model.parameters(), lr=args.pre_lr, momentum=0.9)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
+    optimizer = optim.SGD([{'params': model.feature.parameters(), 'lr': args.lr},
+                           {'params': model.classifier.parameters(), 'lr': args.lr}],
+                          lr=args.lr, momentum=0.9)
+    dis_optimizer = optim.SGD(model.discriminator.parameters(), lr=args.dis_lr, momentum=0.9)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    dis_scheduler = optim.lr_scheduler.LambdaLR(dis_optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(pre_epochs):
@@ -108,7 +112,7 @@ def main():
             source_images, source_labels = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
 
-            class_output, _ = model(source_images, alpha=lambda_p, discriminator=1)
+            class_output, _ = model(source_images, alpha=lambda_p, discriminator=0)
             loss = criterion(class_output, source_labels)
 
             pre_opt.zero_grad()
@@ -150,6 +154,8 @@ def main():
             target_dlabel = torch.full((target_images.size(0),), 0, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
+            dis_optimizer.zero_grad()
+
             source_class_output, source_domain_output = model(source_images, alpha=lambda_p)
             _, target_domain_output = model(target_images, alpha=lambda_p)
 
@@ -159,7 +165,9 @@ def main():
 
             loss = target_domain_loss + source_domain_loss + source_label_loss
             loss.backward()
+
             optimizer.step()
+            dis_optimizer.step()
 
             source_label_loss_epoch += source_label_loss.item()
             source_domain_loss_epoch += source_domain_loss.item()
@@ -179,12 +187,13 @@ def main():
             i += 1
 
         scheduler.step()
+        dis_scheduler.step()
 
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Domain source Loss: {source_domain_loss_epoch:.4f}, '
               f'Domain target Loss: {target_domain_loss_epoch:.4f}, '
               f'Label Loss: {source_label_loss_epoch:.4f}, '
-              f'Total Loss: {source_domain_loss_epoch + target_domain_loss_epoch  + source_label_loss_epoch:.4f}, '
+              f'Total Loss: {source_domain_loss_epoch + target_domain_loss_epoch + source_label_loss_epoch:.4f}, '
               )
 
         wandb.log({
