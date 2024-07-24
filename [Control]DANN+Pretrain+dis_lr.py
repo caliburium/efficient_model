@@ -68,16 +68,17 @@ def main():
     parser.add_argument('--target', type=str, default='MNIST')
     parser.add_argument('--pre_lr', type=float, default=0.05)
     parser.add_argument('--lr', type=float, default=0.05)
-    parser.add_argument('--dis_lr', type=float, default=0.01)
+    # parser.add_argument('--dis_lr', type=float, default=0.01)
+    parser.add_argument('--feature_lr', type=float, default=0.01)
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch
     num_epochs = args.epoch
 
-    wandb.init(project="EM_Domain",
+    wandb.init(project="EM_Domain_dk",
                entity="hails",
                config=args.__dict__,
-               name="DANN_Pre_lr:" + str(args.pre_lr) + "_lr:" + str(args.lr) + "_dis_lr:" + str(args.dis_lr)
+               name="DANN_Pre_lr:" + str(args.pre_lr) + "_lr:" + str(args.lr) + "_dis_lr:" + str(args.feature_lr)
                     + "_Batch:" + str(args.batch_size)
                )
 
@@ -90,12 +91,12 @@ def main():
 
     # pre_opt = optim.Adam(model.parameters(), lr=0.1)
     pre_opt = optim.SGD(model.parameters(), lr=args.pre_lr, momentum=0.9)
-    optimizer = optim.SGD([{'params': model.feature.parameters(), 'lr': args.lr},
+    optimizer = optim.SGD([{'params': model.discriminator.parameters(), 'lr': args.lr},
                            {'params': model.classifier.parameters(), 'lr': args.lr}],
                           lr=args.lr, momentum=0.9)
-    dis_optimizer = optim.SGD(model.discriminator.parameters(), lr=args.dis_lr, momentum=0.9)
+    feature_optimizer = optim.SGD(model.feature.parameters(), lr=args.feature_lr, momentum=0.9)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    dis_scheduler = optim.lr_scheduler.LambdaLR(dis_optimizer, lr_lambda)
+    feature_scheduler = optim.lr_scheduler.LambdaLR(feature_optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(pre_epochs):
@@ -154,7 +155,7 @@ def main():
             target_dlabel = torch.full((target_images.size(0),), 0, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
-            dis_optimizer.zero_grad()
+            feature_scheduler.zero_grad()
 
             source_class_output, source_domain_output = model(source_images, alpha=lambda_p)
             _, target_domain_output = model(target_images, alpha=lambda_p)
@@ -167,7 +168,7 @@ def main():
             loss.backward()
 
             optimizer.step()
-            dis_optimizer.step()
+            feature_scheduler.step()
 
             source_label_loss_epoch += source_label_loss.item()
             source_domain_loss_epoch += source_domain_loss.item()
@@ -187,7 +188,7 @@ def main():
             i += 1
 
         scheduler.step()
-        dis_scheduler.step()
+        feature_scheduler.step()
 
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Domain source Loss: {source_domain_loss_epoch:.4f}, '
