@@ -64,12 +64,12 @@ class DANN(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--pretrain_epoch', type=int, default=50)
+    parser.add_argument('--epoch', type=int, default=50)
+    parser.add_argument('--pretrain_epoch', type=int, default=20)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--source', type=str, default='SVHN')
     parser.add_argument('--target', type=str, default='MNIST')
-    parser.add_argument('--lr', type=float, default=0.05)
+    parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch
@@ -79,8 +79,7 @@ def main():
     wandb.init(project="EM_Domain",
                entity="hails",
                config=args.__dict__,
-               name="DANN_S:" + args.source + "_T:" + args.target
-                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="DANN_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
@@ -115,12 +114,12 @@ def main():
             pre_opt.step()
 
             label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
-
+            """
             print(f'Batches [{i + 1}/{len(source_loader)}], '
                   f'Pretrain Loss: {loss.item():.4f}, '
                   f'Pretrain Accuracy: {label_acc * 100:.3f}%, '
                   )
-
+            """
             i += 1
 
         scheduler.step()
@@ -174,7 +173,7 @@ def main():
             optimizer.step()
 
             loss_tgt_domain_epoch += domain_tgt_loss.item()
-
+            """
             label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
             domain_acc = (torch.argmax(domain_output, dim=1) == target_dlabel).sum().item() / target_dlabel.size(0)
 
@@ -184,7 +183,7 @@ def main():
                   f'Label Loss: {label_loss.item():.4f}, '
                   f'Label Accuracy: {label_acc * 100:.3f}%, '
                   f'Domain Accuracy: {domain_acc * 100:.3f}%')
-
+            """
             i += 1
 
         scheduler.step()
