@@ -61,11 +61,12 @@ class DANN(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
+    parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--pretrain_epoch', type=int, default=30)
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--source', type=str, default='SVHN')
-    parser.add_argument('--target', type=str, default='MNIST')
+    parser.add_argument('--target1', type=str, default='MNIST')
+    parser.add_argument('--target2', type=str, default='CIFAR10')
     parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
@@ -76,11 +77,13 @@ def main():
     wandb.init(project="EM_Domain",
                entity="hails",
                config=args.__dict__,
-               name="DANN_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="DANN_MultiTarget_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+                    + "_S:" + args.source + "/T1:" + args.target1 + "/T2:" + args.target2
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
-    target_loader, target_loader_test = data_loader(args.target, args.batch_size)
+    target1_loader, target1_loader_test = data_loader(args.target1, args.batch_size)
+    target2_loader, target2_loader_test = data_loader(args.target2, args.batch_size)
 
     print("Data load complete, start training")
 
@@ -131,44 +134,46 @@ def main():
         loss_src_domain_epoch = 0
         loss_label_epoch = 0
 
-        for source_data, target_data in zip(source_loader, tqdm(target_loader)):
-            p = (float(i + epoch * min(len(source_loader), len(target_loader))) /
-                 num_epochs / min(len(source_loader), len(target_loader)))
+        for source_data, target1_data, target2_data in zip(source_loader, target1_loader, target2_loader):
+            p = (float(i + epoch * min(len(source_loader), len(target1_loader), len(target2_loader))) /
+                 num_epochs / min(len(source_loader), len(target1_loader), len(target2_loader)))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
             # Training with source data
             source_images, source_labels = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
-
-            class_output, _ = model(source_images, alpha=lambda_p)
-            label_loss = criterion(class_output, source_labels)
+            source_dlabel = torch.full((source_images.size(0),), 1, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
 
+            class_output, domain_output = model(source_images, alpha=lambda_p)
+            label_loss = criterion(class_output, source_labels)
             loss_label_epoch += label_loss.item()
 
-            _, domain_output = model(source_images, alpha=lambda_p)
-            source_dlabel = torch.full((source_images.size(0),), 1, dtype=torch.long, device=device)
-
             domain_src_loss = criterion(domain_output, source_dlabel)
-
             loss_src_domain_epoch += domain_src_loss.item()
 
             # Training with target data
-            target_images, _ = target_data
-            target_images = target_images.to(device)
+            target1_images, _ = target1_data
+            target2_images, _ = target2_data
+            target1_images = target1_images.to(device)
+            target2_images = target2_images.to(device)
 
-            _, domain_output = model(target_images, alpha=lambda_p)
-            target_dlabel = torch.full((target_images.size(0),), 0, dtype=torch.long, device=device)
+            _, domain1_output = model(target1_images, alpha=lambda_p)
+            target1_dlabel = torch.full((target1_images.size(0),), 0, dtype=torch.long, device=device)
+            _, domain2_output = model(target2_images, alpha=lambda_p)
+            target2_dlabel = torch.full((target2_images.size(0),), 0, dtype=torch.long, device=device)
 
-            domain_tgt_loss = criterion(domain_output, target_dlabel)
+            target1_loss = criterion(domain_output, target1_dlabel)
+            target2_loss = criterion(domain_output, target2_dlabel)
+            domain_tgt_loss = target1_loss + target2_loss
 
-            loss  = domain_tgt_loss+domain_src_loss+label_loss
+            loss = domain_tgt_loss + domain_src_loss + label_loss
+            loss_tgt_domain_epoch += domain_tgt_loss.item()
 
             loss.backward()
             optimizer.step()
 
-            loss_tgt_domain_epoch += domain_tgt_loss.item()
             """
             label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
             domain_acc = (torch.argmax(domain_output, dim=1) == target_dlabel).sum().item() / target_dlabel.size(0)
@@ -237,9 +242,11 @@ def main():
 
         with torch.no_grad():
             lc_tester(source_loader_test, 'Source')
-            lc_tester(target_loader_test, 'Target')
+            lc_tester(target1_loader_test, 'Target1')
+            lc_tester(target2_loader_test, 'Target2')
             dc_tester(source_loader_test, 'Source', 1)
-            dc_tester(target_loader_test, 'Target', 0)
+            dc_tester(target1_loader_test, 'Target1', 0)
+            dc_tester(target2_loader_test, 'Target2', 0)
 
 
 if __name__ == '__main__':

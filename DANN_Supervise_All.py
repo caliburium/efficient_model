@@ -76,7 +76,7 @@ def main():
     wandb.init(project="EM_Domain",
                entity="hails",
                config=args.__dict__,
-               name="DANN_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="DANN_Supervise_All_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
