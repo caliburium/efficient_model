@@ -20,16 +20,16 @@ class DeepLakeDataset(Dataset):
         return len(self.ds)
 
     def __getitem__(self, idx):
-        # DeepLake¿¡¼­ µ¥ÀÌÅÍ °¡Á®¿À±â
         sample = self.ds[idx]
 
-        image = sample['images'].numpy()  # ÀÌ¹ÌÁö ÅÙ¼­
-        label = sample['labels'].numpy()  # ·¹ÀÌºí ÅÙ¼­
+        image = sample['images'].numpy()
+        label = sample['labels'].numpy()
 
         if self.transform:
             image = self.transform(image)
 
         return image, label
+
 
 class CaffeNet(nn.Module):
     def __init__(self, num_classes=100):
