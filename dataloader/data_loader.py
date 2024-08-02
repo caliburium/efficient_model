@@ -1,17 +1,7 @@
-import numpy as np
-from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
-
-
-class ToBlackAndWhite(object):
-    def __call__(self, img):
-        img = img.convert('L')
-        img = np.array(img)
-        img = (img > 127).astype(np.uint8) * 255
-        img = Image.fromarray(img)
-        return img
+from ToBlackAndWite import *
 
 
 def data_loader(source, batch_size):
