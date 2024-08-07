@@ -36,7 +36,7 @@ class DANN(nn.Module):
             nn.Linear(1024, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
-            nn.Linear(256, 10)
+            nn.Linear(256, 7)
         )
 
         self.discriminator = nn.Sequential(

@@ -46,4 +46,5 @@ class AlexNetCaffe(nn.Module):
         x = self.features(x * 57.6)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
-        return self.class_classifier(x)
+        x = self.class_classifier(x)
+        return x
