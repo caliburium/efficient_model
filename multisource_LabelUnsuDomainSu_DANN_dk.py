@@ -129,6 +129,15 @@ def main():
                   f'Pretrain Accuracy: {label_acc * 100:.3f}%, '
                   )
             """
+            label1_acc = (torch.argmax(class1_output, dim=1) == source1_labels).sum().item() / source1_labels.size(0)
+            label2_acc = (torch.argmax(class2_output, dim=1) == source2_labels).sum().item() / source2_labels.size(0)
+
+            print(f'Batches [{i + 1}/{min(len(source1_loader), len(source2_loader), len(target_loader))}], '
+                    f'Source1 Loss: {source1_loss.item():.4f}, '
+                    f'Source2 Loss: {source2_loss.item():.4f}, '
+                    f'Source1 Accuracy: {label1_acc * 100:.3f}%, '
+                    f'Source2 Accuracy: {label2_acc * 100:.3f}%, '
+                    )
             i += 1
 
         # scheduler.step()
@@ -155,13 +164,17 @@ def main():
             # Training with source data
             source1_images, source1_labels = source1_data
             source1_images, source1_labels = source1_images.to(device), source1_labels.to(device)
-            source1_dlabel = torch.full((source1_images.size(0),), 1, dtype=torch.long, device=device)
+            source1_dlabel = torch.full((source1_images.size(0),), 0, dtype=torch.long, device=device)
             source2_images, source2_labels = source2_data
             source2_images, source2_labels = source2_images.to(device), source2_labels.to(device)
-            source2_dlabel = torch.full((source1_images.size(0),), 1, dtype=torch.long, device=device)
+            source2_dlabel = torch.full((source1_images.size(0),), 0, dtype=torch.long, device=device)
+            target_images,  target_labels = target_data
+            target_images,  target_labels = target_images.to(device),  target_labels.to(device)
+            target_dlabel = torch.full((target_images.size(0),), 1, dtype=torch.long, device=device)
 
             source1_label_output, source1_domain_output = model(source1_images, alpha=lambda_p)
             source2_label_output, source2_domain_output = model(source2_images, alpha=lambda_p)
+            target_label_output, target_domain_output = model(target_images, alpha=lambda_p)
             source1_label_loss = criterion(source1_label_output, source1_labels)
             source2_label_loss = criterion(source2_label_output, source2_labels)
 
@@ -174,11 +187,6 @@ def main():
             domain_src_loss = domain_src1_loss + domain_src2_loss
             loss_src_domain_epoch += domain_src_loss.item()
 
-            # Training with target data
-            target_images, _ = target_data
-            target_images = target_images.to(device)
-            target_dlabel = torch.full((target_images.size(0),), 0, dtype=torch.long, device=device)
-
             _, domain_output = model(target_images, alpha=lambda_p)
             domain_tgt_loss = criterion(domain_output, target_dlabel)
 
@@ -188,6 +196,13 @@ def main():
             loss.backward()
             optimizer_cls.step()
             optimizer_dom.step()
+
+            label1_acc = (torch.argmax(source1_label_output, dim=1) == source1_labels).sum().item() / source1_labels.size(0)
+            label2_acc = (torch.argmax(source2_label_output, dim=1) == source2_labels).sum().item() / source2_labels.size(0)
+            label3_acc = (torch.argmax(target_label_output, dim=1) == target_labels).sum().item() / target_labels.size(0)
+            domain_source1_acc = (torch.argmax(source1_domain_output, dim=1) == source1_dlabel).sum().item() / source1_dlabel.size(0)
+            domain_source2_acc = (torch.argmax(source2_domain_output, dim=1) == source2_dlabel).sum().item() / source2_dlabel.size(0)
+            domain_target_acc = (torch.argmax(domain_output, dim=1) == target_dlabel).sum().item() / target_dlabel.size(0)
 
             """
             label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
@@ -200,6 +215,19 @@ def main():
                   f'Label Accuracy: {label_acc * 100:.3f}%, '
                   f'Domain Accuracy: {domain_acc * 100:.3f}%')
             """
+
+            print(f'Batches [{i + 1}/{min(len(source1_loader), len(source2_loader), len(target_loader))}], '
+                  f'Domain source1 Loss: {domain_src1_loss.item():.4f}, '
+                  f'Domain source2 Loss: {domain_src2_loss.item():.4f}, '
+                  f'Domain target Loss: {domain_tgt_loss.item():.4f}, '
+                  f'Label Loss: {label_loss.item():.4f}, '
+                  f'Source1 Accuracy: {label1_acc * 100:.3f}%, '
+                  f'Source2 Accuracy: {label2_acc * 100:.3f}%, '
+                  f'Target Accuracy: {label3_acc * 100:.3f}%, '
+                  f'Source1 Domain Accuracy: {domain_source1_acc * 100:.3f}%, '
+                  f'Source2 Domain Accuracy: {domain_source2_acc * 100:.3f}%, '
+                  f'Target Domain Accuracy: {domain_target_acc * 100:.3f}%'
+                )
             i += 1
 
         scheduler_cls.step()
