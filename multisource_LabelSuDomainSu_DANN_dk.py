@@ -62,7 +62,7 @@ class DANN(nn.Module):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=100)
-    parser.add_argument('--pretrain_epoch', type=int, default=30)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--source1', type=str, default='SVHN')
     parser.add_argument('--source2', type=str, default='MNIST')
