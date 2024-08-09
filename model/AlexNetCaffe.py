@@ -2,18 +2,18 @@ from collections import OrderedDict
 import torch.nn as nn
 
 
-class Id(nn.Module):
-    def __init__(self):
-        super(Id, self).__init__()
-
-    def forward(self, x):
-        return x
-
-
 class AlexNetCaffe(nn.Module):
-    def __init__(self, num_classes=100, domains=3, dropout=True):
+    def __init__(self, num_classes=7, dropout=True):
         super(AlexNetCaffe, self).__init__()
         print("Using Caffe AlexNet")
+
+        class Id(nn.Module):
+            def __init__(self):
+                super(Id, self).__init__()
+
+            def forward(self, x):
+                return x
+
         self.features = nn.Sequential(OrderedDict([
             ("conv1", nn.Conv2d(3, 96, kernel_size=11, stride=4)),
             ("relu1", nn.ReLU(inplace=True)),
@@ -41,10 +41,10 @@ class AlexNetCaffe(nn.Module):
 
         self.class_classifier = nn.Linear(4096, num_classes)
 
-    def forward(self, x, lambda_val=0):
+    def forward(self, x):
         # 57.6 is the magic number needed to bring torch data back to the range of caffe data, based on used std
         x = self.features(x * 57.6)
         x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        x = self.class_classifier(x)
-        return x
+        fcl = self.classifier(x)
+        x = self.class_classifier(fcl)
+        return fcl, x

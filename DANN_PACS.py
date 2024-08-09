@@ -5,9 +5,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 from functions.ReverseLayerF import *
 from functions.lr_lambda import *
-import numpy as np
 import wandb
-import time
+import numpy as np
 from tqdm import tqdm
 from dataloader.pacs_loader import *
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,9 +64,9 @@ class DANN(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--pretrain_epoch', type=int, default=30)
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--epoch', type=int, default=200)
+    parser.add_argument('--pretrain_epoch', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
@@ -81,11 +80,15 @@ def main():
                name="DANN_PACS_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
-    _, photo_loader_test = pacs_loader('photo', args.batch_size)
-    _, art_loader_test = pacs_loader('art_painting', args.batch_size)
-    _, cartoon_loader_test = pacs_loader('cartoon', args.batch_size)
-    _, sketch_loader_test = pacs_loader('sketch', args.batch_size)
-    train_loader, _ = pacs_loader('all', args.batch_size)
+    pacs_train = deeplake.load("hub://activeloop/pacs-train")
+    pacs_test = deeplake.load("hub://activeloop/pacs-test")
+
+    # Photo, Art_Painting, Cartoon, Sketch
+    _, photo_loader_test = pacs_loader(True, 0, args.batch_size, pacs_train, pacs_test)
+    _, art_loader_test = pacs_loader(True, 1, args.batch_size, pacs_train, pacs_test)
+    _, cartoon_loader_test = pacs_loader(True, 2, args.batch_size, pacs_train, pacs_test)
+    _, sketch_loader_test = pacs_loader(True, 3, args.batch_size, pacs_train, pacs_test)
+    train_loader, _ = pacs_loader(False, 0, args.batch_size, pacs_train, pacs_test)
 
     print("Data load complete, start training")
 
@@ -97,30 +100,53 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(pre_epochs):
-        model.train()
-        i = 0
+        model.train()  # Set the model to training mode
+        total_loss = 0  # Initialize total loss for the epoch
+        total_loss_l = 0  # Initialize total classification loss for the epoch
+        total_loss_d = 0  # Initialize total domain loss for the epoch
 
-        for train_data in train_loader:
-            p = (float(i + epoch * len(train_data)) / num_epochs / len(train_data))
+        for i, train_data in enumerate(train_loader):
+            # Calculate the progress parameter `p`
+            p = float(i + epoch * len(train_loader)) / num_epochs / len(train_loader)
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
             images, labels, domain = train_data
-            images, labels, domain = images.to(device), labels.to(device), domain.to(device)
+            images = images.to(device)
+            labels = labels.to(device).long().squeeze()  # Ensure labels are LongTensor and 1D
+            domain = domain.to(device).long().squeeze()  # Ensure domain is LongTensor and 1D
 
+            # Forward pass
             class_output, domain_output = model(images, False, alpha=lambda_p)
+
+            # Compute losses
             loss_l = criterion(class_output, labels)
             loss_d = criterion(domain_output, domain)
-
             loss = loss_l + loss_d
 
+            # Accumulate total loss for the epoch
+            total_loss += loss.item()
+            total_loss_l += loss_l.item()
+            total_loss_d += loss_d.item()
+
+            # Backpropagation and optimization
             pre_opt.zero_grad()
             loss.backward()
             pre_opt.step()
 
-            i += 1
-
+        # Update the learning rate
         scheduler.step()
-        model.eval()
+
+        # Print average loss per epoch
+        avg_loss = total_loss / len(train_loader)
+        avg_loss_l = total_loss_l / len(train_loader)
+        avg_loss_d = total_loss_d / len(train_loader)
+
+        print(
+            f"Epoch [{epoch + 1}/{pre_epochs}], Total Loss: {avg_loss:.4f}, Classification Loss: {avg_loss_l:.4f}, Domain Loss: {avg_loss_d:.4f}")
+
+        model.eval()  # Set the model to evaluation mode
+
+    print("Pretrain Finished")
 
     for epoch in range(num_epochs):
         model.train()
@@ -137,8 +163,8 @@ def main():
             images, labels, domain = images.to(device), labels.to(device), domain.to(device)
 
             class_output, domain_output = model(images, True, alpha=lambda_p)
-            loss_l = criterion(class_output, labels)
-            loss_d = criterion(domain_output, domain)
+            loss_l = criterion(class_output, labels.squeeze())
+            loss_d = criterion(domain_output, domain.squeeze())
             loss = loss_l + loss_d
 
             optimizer.zero_grad()
@@ -152,7 +178,6 @@ def main():
 
         scheduler.step()
 
-        end_time = time.time()
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Label Loss: {loss_label_epoch:.4f}, '
               f'Domain Loss: {loss_domain_epoch:.4f}, '
@@ -169,31 +194,33 @@ def main():
 
         def lc_tester(loader, group):
             correct, total = 0, 0
-            for images, labels in loader:
-                images, labels = images.to(device), labels.to(device)
+            for image, label, _ in loader:
+                image = image.to(device)
+                label = label.to(device).long()  # Ensure label is LongTensor
 
-                class_output, _ = model(images, alpha=0.0)
+                class_output, _ = model(image, alpha=0.0)
                 preds = F.log_softmax(class_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+                total += label.size(0)
+                correct += (predicted == label).sum().item()
 
             accuracy = correct / total
             wandb.log({'[Label] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
             print('[Label] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
-        def dc_tester(loader, group, d_label):
+        def dc_tester(loader, group):
             correct, total = 0, 0
-            for images, _ in loader:
-                images = images.to(device)
+            for image, _, domain in loader:
+                image = image.to(device)
+                domain = domain.to(device).long()  # Ensure domain is LongTensor
 
-                _, domain_output = model(images, alpha=0.0)
+                _, domain_output = model(image, alpha=0.0)
                 preds = F.log_softmax(domain_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
-                total += images.size(0)
-                correct += (predicted == d_label).sum().item()
+                total += domain.size(0)
+                correct += (predicted == domain).sum().item()
 
             accuracy = correct / total
             wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
@@ -204,10 +231,10 @@ def main():
             lc_tester(art_loader_test, 'Art')
             lc_tester(cartoon_loader_test, 'Cartoon')
             lc_tester(sketch_loader_test, 'Sketch')
-            dc_tester(photo_loader_test, 'Photo', 0)
-            dc_tester(art_loader_test, 'Art', 1)
-            dc_tester(cartoon_loader_test, 'Cartoon', 2)
-            dc_tester(sketch_loader_test, 'Sketch', 3)
+            dc_tester(photo_loader_test, 'Photo')
+            dc_tester(art_loader_test, 'Art')
+            dc_tester(cartoon_loader_test, 'Cartoon')
+            dc_tester(sketch_loader_test, 'Sketch')
 
 
 if __name__ == '__main__':
