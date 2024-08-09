@@ -2,17 +2,17 @@ from collections import OrderedDict
 import torch.nn as nn
 
 
+class Id(nn.Module):
+    def __init__(self):
+        super(Id, self).__init__()
+
+    def forward(self, x):
+        return x
+
+
 class AlexNetCaffe(nn.Module):
     def __init__(self, num_classes=7, dropout=True):
         super(AlexNetCaffe, self).__init__()
-        print("Using Caffe AlexNet")
-
-        class Id(nn.Module):
-            def __init__(self):
-                super(Id, self).__init__()
-
-            def forward(self, x):
-                return x
 
         self.features = nn.Sequential(OrderedDict([
             ("conv1", nn.Conv2d(3, 96, kernel_size=11, stride=4)),

@@ -1,5 +1,5 @@
 import torch.nn as nn
-from functions import ReverseLayerF
+from functions.ReverseLayerF import ReverseLayerF
 
 
 class Discriminator(nn.Module):
