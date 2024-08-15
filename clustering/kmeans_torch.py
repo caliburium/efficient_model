@@ -8,12 +8,12 @@ class KMeansTorch(nn.Module):
         self.num_clusters = num_clusters
         self.max_iter = max_iter
         self.tol = tol
-        self.device = torch.device(device)  # device¸¦ ÀÎ½ºÅÏ½º º¯¼ö·Î ÀúÀå
+        self.device = torch.device(device)
         self.centroids = None
 
     def fit(self, X):
         assert X.ndim == 2, "Input data should be a 2D tensor"
-        X = X.to(self.device)  # X¸¦ ÁöÁ¤µÈ device·Î ÀÌµ¿
+        X = X.to(self.device)
 
         labels = torch.zeros(X.size(0), dtype=torch.long, device=self.device)
 
@@ -34,7 +34,7 @@ class KMeansTorch(nn.Module):
         return labels
 
     def predict(self, X):
-        X = X.to(self.device)  # X¸¦ ÁöÁ¤µÈ device·Î ÀÌµ¿
+        X = X.to(self.device) 
         distances = torch.cdist(X, self.centroids)
         labels = torch.argmin(distances, dim=1)
         return labels
