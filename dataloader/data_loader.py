@@ -1,22 +1,21 @@
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
-from ToBlackAndWite import *
-
+# from ToBlackAndWhite import ToBlackAndWhite
 
 def data_loader(source, batch_size):
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-
+    """
     transform_bw = transforms.Compose([
         ToBlackAndWhite(),
         transforms.Grayscale(num_output_channels=3),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-
+    """
     transform_mnist = transforms.Compose([
         transforms.Pad(2),
         transforms.Grayscale(num_output_channels=3),
@@ -51,9 +50,10 @@ def data_loader(source, batch_size):
     elif source == 'SVHN':
         dataset = datasets.SVHN(root='./data', split='train', download=True, transform=transform)
         dataset_test = datasets.SVHN(root='./data', split='test', download=True, transform=transform)
-    elif source == 'SVHN_BW':
-        dataset = datasets.SVHN(root='./data', split='train', download=True, transform=transform_bw)
-        dataset_test = datasets.SVHN(root='./data', split='test', download=True, transform=transform_bw)
+
+#    elif source == 'SVHN_BW':
+#        dataset = datasets.SVHN(root='./data', split='train', download=True, transform=transform_bw)
+#        dataset_test = datasets.SVHN(root='./data', split='test', download=True, transform=transform_bw)
 
     elif source == 'CIFAR10':
         dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
