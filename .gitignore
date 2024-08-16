@@ -1,4 +1,6 @@
-
+/dg_mmld/data/
+/dg_mmld/ckpt/
+/dg_mmld/backbone/
 /wandb/
 /data/
 /1409.7495.pdf
