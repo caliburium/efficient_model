@@ -1,114 +1,80 @@
-import sys
 # sys.path.append('../')
-
-from torch.utils.data import DataLoader
 import torch
 import argparse
 import os
-from train.eval import *
 from clustering.domain_split import domain_split
-from dataloader.dataloader import random_split_dataloader
-from model import alexnet, caffenet
+import caffenet
 from torch import nn, optim
-from torch.optim.lr_scheduler import StepLR, ExponentialLR
-from sklearn.manifold import TSNE
-import matplotlib.pyplot as plt
+from torch.optim.lr_scheduler import StepLR
 import numpy as np
-import torch
 from copy import deepcopy
-from torch.nn import init
-from model import caffenet, alexnet, resnet
-from dataloader.dataloader import *
 from clustering.domain_split import calc_mean_std
-from sklearn.decomposition import PCA
-from util.scheduler import inv_lr_scheduler
 from torch import nn
-from util.util import split_domain
 import torch
 from numpy.random import *
-import numpy as np
-from loss.EntropyLoss import HLoss
-from loss.MaximumSquareLoss import MaximumSquareLoss
-
-def show_images(images, cols = 1, titles = None):
-    assert((titles is None)or (len(images) == len(titles)))
-    n_images = len(images)
-    if titles is None: titles = ['Image (%d)' % i for i in range(1,n_images + 1)]
-    fig = plt.figure()
-    for n, (image, title) in enumerate(zip(images, titles)):
-        a = fig.add_subplot(cols, np.ceil(n_images/float(cols)), n + 1)
-        if image.ndim == 2:
-            plt.gray()
-        plt.imshow(image)
-        a.set_title(title)
-    fig.set_size_inches(np.array(fig.get_size_inches()) * n_images)
-    plt.show()
-    
-def set_parameter_requires_grad(model, feature_extracting):
-    if feature_extracting:
-        print('model.features parameters are fixed')
-        for param in model.parameters():
-            param.requires_grad = False
+from torchvision.datasets.folder import make_dataset, default_loader
+from torch.optim.lr_scheduler import _LRScheduler
+import torch.nn as nn
+import torch.nn.functional as F
+from data_loader import *
             
-def split_domain(domains, split_idx, print_domain=True):
-    source_domain = deepcopy(domains)
-    target_domain = [source_domain.pop(split_idx)]
-    if print_domain:
-        print('Source domain: ', end='')
-        for domain in source_domain:
-            print(domain, end=', ')
-        print('Target domain: ', end='')
-        for domain in target_domain:
-            print(domain)
-    return source_domain, target_domain
-    
-domain_map = {
-    'PACS': ['photo', 'art_painting', 'cartoon', 'sketch'],
-    'PACS_random_split': ['photo', 'art_painting', 'cartoon', 'sketch'],
-    'OfficeHome': ['Art', 'Clipart', 'Product', 'RealWorld'],
-    'VLCS': ['Caltech', 'Labelme', 'Pascal', 'Sun']
-}
+class MaximumSquareLoss(nn.Module):
+    def __init__(self):
+        super(MaximumSquareLoss, self).__init__()
+    def forward(self, x):
+        p = F.softmax(x, dim=1)
+        b = (torch.mul(p, p))
+        b = -1.0 *  b.sum(dim=1).mean() / 2
+        return b
 
-def get_domain(name):
-    if name not in domain_map:
-        raise ValueError('Name of dataset unknown %s' %name)
-    return domain_map[name]
+class HLoss(nn.Module):
+    def __init__(self):
+        super(HLoss, self).__init__()
 
-nets_map = {
-    'caffenet': {'deepall': caffenet.caffenet, 'general': caffenet.DGcaffenet},
-    'alexnet': {'deepall': alexnet.alexnet, 'general': alexnet.DGalexnet},
-    'resnet': {'deepall': resnet.resnet, 'general': resnet.DGresnet}
-}
+    def forward(self, x):
+        b = F.softmax(x, dim=1) * F.log_softmax(x, dim=1)
+        b = -1.0 * b.sum(dim=1).mean()
+        return b
 
-# def get_model(name, train):
-#     if name not in nets_map:
-#         raise ValueError('Name of network unknown %s' % name)
-
-#     def get_network_fn(**kwargs):
-#         return nets_map[name][train](**kwargs)
-
-#     return get_network_fn
-
-# def get_model_lr(name, train, model, fc_weight=1.0, disc_weight=1.0):
-#     if name == 'caffenet':
-#         return [(model.base_model.features, 1.0),  (model.base_model.classifier, 1.0),
-#             (model.base_model.class_classifier, 1.0 * fc_weight), (model.discriminator, 1.0 * disc_weight)]
-#     elif name == 'resnet':
-#         return [(model.base_model.conv1, 1.0), (model.base_model.bn1, 1.0), (model.base_model.layer1, 1.0), 
-#                 (model.base_model.layer2, 1.0), (model.base_model.layer3, 1.0), (model.base_model.layer4, 1.0), 
-#                 (model.base_model.fc, 1.0 * fc_weight), (model.discriminator, 1.0 * disc_weight)]
+class inv_lr_scheduler(_LRScheduler):
+    def __init__(self, optimizer, alpha, beta, total_epoch, last_epoch=-1):
+        self.alpha = alpha
+        self.beta = beta
+        self.total_epoch = total_epoch
+        super(inv_lr_scheduler, self).__init__(optimizer, last_epoch)
+        
+    def get_lr(self):
+        return [base_lr * ((1 + self.alpha * self.last_epoch / self.total_epoch) ** (-self.beta)) for base_lr in self.base_lrs]
 
 
-def train_to_get_label(train, clustering):
-    if train == 'deepall':
-        return [False, False]
-    elif train == 'general' and clustering == True:
-        return [False, True]
-    elif train == 'general' and clustering != True:
-        return [True, False]
-    else: 
-        raise ValueError('Name of train unknown %s' % train)
-    
+def eval_model(model, eval_data, device, epoch, filename):
+    criterion = nn.CrossEntropyLoss()
+    model.eval()  # Set model to training mode
+    running_loss = 0.0
+    running_corrects = 0
+    # Iterate over data.
+    data_num = 0
+    for inputs, labels in eval_data:
+        with torch.no_grad():
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            # forward
+            outputs = model(inputs)
+            if isinstance(outputs, tuple):
+                outputs = outputs[0]
+            loss = criterion(outputs, labels)
+            _, preds = torch.max(outputs, 1)
+            # statistics
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels.data).item()
+            data_num += inputs.size(0)
+    epoch_loss = running_loss / len(eval_data.dataset)
+    epoch_acc = running_corrects / len(eval_data.dataset)
+    log = 'Eval: Epoch: {} Loss: {:.4f} Acc: {:.4f}'.format(epoch, epoch_loss, epoch_acc)
+    print(log)
+    with open(filename, 'a') as f: 
+        f.write(log + '\n')
+    return epoch_acc
 
 def get_disc_dim(name, clustering, domain_num, clustering_num):
     if name == 'deepall':
@@ -188,7 +154,7 @@ if __name__ == '__main__':
     source_domain, target_domain = split_domain(domain, args.exp_num)
 
     device = torch.device("cuda:" + str(args.gpu) if torch.cuda.is_available() else "cpu")
-    get_domain_label, get_cluster = train_to_get_label(args.train, args.clustering)
+    get_domain_label, get_cluster = True, False
 
     source_train, source_val, target_test = random_split_dataloader(
         data=args.data, data_root=args.data_root, source_domain=source_domain, target_domain=target_domain,
@@ -201,23 +167,12 @@ if __name__ == '__main__':
     num_epoch = args.num_epoch
     lr_step = args.lr_step
     
-    disc_dim = get_disc_dim(args.train, args.clustering, len(source_domain), args.num_clustering)
-
-    # model = get_model(args.model, args.train)(
-    #     num_classes=source_train.dataset.dataset.num_class, num_domains=disc_dim, pretrained=True)
-    
-    model = caffenet.DGcaffenet(num_classes=source_train.dataset.dataset.num_class, num_domains=disc_dim, pretrained=True)
-    model = model.to(device)
-
-    # model_lr = get_model_lr(args.model, args.train, model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
-
+    # caffenet-specific something
+    disc_dim = len(source_domain)
+    model = caffenet.DGcaffenet(num_classes=source_train.dataset.dataset.num_class, num_domains=disc_dim, pretrained=True).to(device)
     model_lr = [(model.base_model.features, 1.0),  (model.base_model.classifier, 1.0),
             (model.base_model.class_classifier, 1.0 *args.fc_weight), (model.discriminator, 1.0 * args.disc_weight)]
     
-    # from util.util import get_optimizer
-    # optimizers = [get_optimizer(model_part, args.lr * alpha, args.momentum, args.weight_decay,
-    #                             args.feature_fixed, args.nesterov, per_layer=False) for model_part, alpha in model_lr]
-
     optimizers = [optim.SGD(model.parameters(), lr=args.lr*alpha, momentum=args.momentum, weight_decay=args.weight_decay) for model, alpha in model_lr]
 
     if args.scheduler == 'inv':
@@ -259,10 +214,7 @@ if __name__ == '__main__':
             
         else:
             weight = None
-        
-            # model=model, train_data=source_train, optimizers=optimizers, device=device,
-            # epoch=epoch, num_epoch=num_epoch, filename=path+'/source_train.txt', entropy=args.entropy,
-            # disc_weight=weight, entropy_weight=args.entropy_weight, grl_weight=args.grl_weight)
+            
         # training model
         class_criterion = nn.CrossEntropyLoss()
         print(weight)
@@ -327,13 +279,11 @@ if __name__ == '__main__':
             f.write(log + '\n') 
 
         # evaluation
-
         if epoch % args.eval_step == 0:
             acc =  eval_model(model, source_val, device, epoch, path+'/source_eval.txt')
             acc_ = eval_model(model, target_test, device, epoch, path+'/target_test.txt')
         
         # save model 
-
         if epoch % args.save_step == 0:
             torch.save(model.state_dict(), os.path.join(
                 path, 'models',
@@ -351,7 +301,6 @@ if __name__ == '__main__':
             scheduler.step()
     
     best_model = caffenet.DGcaffenet(num_classes=source_train.dataset.dataset.num_class, num_domains=disc_dim, pretrained=False)
-
     best_model.load_state_dict(torch.load(os.path.join(
                 path, 'models',
                 "model_best.pt"), map_location=device))
