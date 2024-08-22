@@ -15,20 +15,19 @@ class SimpleCNN(nn.Module):
     def __init__(self, num_classes=10):
         super(SimpleCNN, self).__init__()
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=5),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(3, 32, kernel_size=5, padding=2, stride=2), # 16
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(64, 128, kernel_size=5),
-            nn.BatchNorm2d(128),
+            nn.MaxPool2d(3, 2), # 8
+            nn.Conv2d(32, 64, kernel_size=3), #6
             nn.ReLU(),
-            nn.MaxPool2d(2)
+            nn.MaxPool2d(3, 2), # 2
         )
         self.classifier = nn.Sequential(
-            nn.Linear(128 * 5 * 5, 512),
+            nn.Linear(64 * 2 * 2, 512),
             nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes)
+            nn.Linear(512, 128),
+            nn.ReLU(),
+            nn.Linear(128, num_classes)
         )
 
     def forward(self, x):
@@ -39,19 +38,20 @@ class SimpleCNN(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=100)
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--epoch', type=int, default=1000)
+    parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--source', type=str, default='SVHN')
     parser.add_argument('--target', type=str, default='MNIST')
-    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
     num_epochs = args.epoch
     # Initialize Weights and Biases
-    wandb.init(project="EM_Domain",
+    wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="CORAL_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CORAL]_S:" + args.source + "_T:" + args.target
+                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     source_loader, source_loader_test = data_loader(args.source, args.batch_size)
@@ -60,7 +60,8 @@ def main():
     print("Data load complete, start training")
 
     model = SimpleCNN().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
