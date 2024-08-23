@@ -18,15 +18,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from data_loader import *
             
-class MaximumSquareLoss(nn.Module):
-    def __init__(self):
-        super(MaximumSquareLoss, self).__init__()
-    def forward(self, x):
-        p = F.softmax(x, dim=1)
-        b = (torch.mul(p, p))
-        b = -1.0 *  b.sum(dim=1).mean() / 2
-        return b
-
 class HLoss(nn.Module):
     def __init__(self):
         super(HLoss, self).__init__()
@@ -219,10 +210,7 @@ if __name__ == '__main__':
         class_criterion = nn.CrossEntropyLoss()
         print(weight)
         domain_criterion = nn.CrossEntropyLoss(weight=weight)
-        if args.entropy == 'default':
-            entropy_criterion = HLoss()
-        else:
-            entropy_criterion = MaximumSquareLoss()
+        entropy_criterion = HLoss()
 
         p = epoch / num_epoch
         alpha = (2. / (1. + np.exp(-10 * p)) -1) * args.grl_weight
