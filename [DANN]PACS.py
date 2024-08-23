@@ -1,4 +1,6 @@
 import argparse
+
+import deeplake
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -74,21 +76,21 @@ def main():
     num_epochs = args.epoch
 
     # Initialize Weights and Biases
-    wandb.init(project="EM_Domain",
+    wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="DANN_PACS_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[DANN]_PACS_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     pacs_train = deeplake.load("hub://activeloop/pacs-train")
     pacs_test = deeplake.load("hub://activeloop/pacs-test")
 
     # Photo, Art_Painting, Cartoon, Sketch
-    _, photo_loader_test = pacs_loader(True, 0, args.batch_size, pacs_train, pacs_test)
-    _, art_loader_test = pacs_loader(True, 1, args.batch_size, pacs_train, pacs_test)
-    _, cartoon_loader_test = pacs_loader(True, 2, args.batch_size, pacs_train, pacs_test)
-    _, sketch_loader_test = pacs_loader(True, 3, args.batch_size, pacs_train, pacs_test)
-    train_loader, _ = pacs_loader(False, 0, args.batch_size, pacs_train, pacs_test)
+    train_loader = pacs_loader(split='train', batch_size=args.batch_size, download=True)
+    photo_loader_test = pacs_loader(split='test', domain=0, batch_size=args.batch_size, download=True)
+    art_loader_test = pacs_loader(split='test', domain=1, batch_size=args.batch_size, download=True)
+    cartoon_loader_test = pacs_loader(split='test', domain=2, batch_size=args.batch_size, download=True)
+    sketch_loader_test = pacs_loader(split='test', domain=3, batch_size=args.batch_size, download=True)
 
     print("Data load complete, start training")
 

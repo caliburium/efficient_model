@@ -6,7 +6,6 @@ import torch.nn.functional as F
 import numpy as np
 import wandb
 from tqdm import tqdm
-from functions.coral_loss import coral_loss
 from dataloader.data_loader import data_loader
 from model.SimpleCNN import CNN32
 
@@ -17,8 +16,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
     parser.add_argument('--batch_size', type=int, default=100)
-    parser.add_argument('--source', type=str, default='SVHN')
-    parser.add_argument('--target', type=str, default='MNIST')
     parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
@@ -27,16 +24,15 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CORAL]_S:" + args.source + "_T:" + args.target
-                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CNN]_2Source_SVHN&MNIST" + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
-    source_loader, source_loader_test = data_loader(args.source, args.batch_size)
-    target_loader, target_loader_test = data_loader(args.target, args.batch_size)
+    svhn_loader, svhn_loader_test = data_loader('SVHN', args.batch_size)
+    mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
 
     print("Data load complete, start training")
 
-    model = CNN32(num_classes=10).to(device)
+    model = CNN32().to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
     criterion = nn.CrossEntropyLoss()
@@ -44,44 +40,41 @@ def main():
     for epoch in range(num_epochs):
         model.train()
         i = 0
-        loss_classification = 0
-        loss_coral = 0
+        loss_svhn = 0
+        loss_mnist = 0
         loss_total = 0
 
-        for source_data, target_data in zip(source_loader, tqdm(target_loader)):
-            source_images, source_labels = source_data
-            source_images, source_labels = source_images.to(device), source_labels.to(device)
-            target_images, _ = target_data
-            target_images = target_images.to(device)
+        for svhn_data, mnist_data in zip(mnist_loader, tqdm(svhn_loader)):
+            svhn_images, svhn_labels = svhn_data
+            svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
+            mnist_images, mnist_labels = mnist_data
+            mnist_images, mnist_labels = mnist_images.to(device), mnist_labels.to(device)
 
-            # Forward pass for source domain (SVHN)
-            source_features, source_outputs = model(source_images)
-            classification_loss = criterion(source_outputs, source_labels)
+            _, svhn_outputs = model(svhn_images)
+            svhn_loss = criterion(svhn_outputs, svhn_labels)
 
-            # Forward pass for target domain (MNIST)
-            target_features, _ = model(target_images)
-            coral_loss_value = coral_loss(source_features, target_features)
+            _, mnist_outputs = model(mnist_images)
+            mnist_loss = criterion(mnist_outputs, mnist_labels)
 
-            # Total loss (classification loss + CORAL loss)
-            total_loss = classification_loss + coral_loss_value
+            loss = svhn_loss + mnist_loss
 
             # Backward and optimize
             optimizer.zero_grad()
-            total_loss.backward()
+            loss.backward()
             optimizer.step()
 
-            loss_classification += classification_loss.item()
-            loss_coral += coral_loss_value.item()
-            loss_total += total_loss.item()
+            loss_mnist += mnist_loss.item()
+            loss_svhn += svhn_loss.item()
+            loss_total += loss.item()
 
             i += 1
 
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Classification Loss: {loss_classification:.4f}, '
-              f'Coral Loss: {loss_coral:.4f}, Total Loss: {loss_total:.4f}')
+        print(f'Epoch [{epoch + 1}/{num_epochs}], SVHN Loss: {loss_svhn:.4f}, '
+              f'MNIST Loss: {loss_mnist:.4f}, Total Loss: {loss_total:.4f}')
         wandb.log({
-            'Classification Loss': loss_classification,
-            'Coral Loss': loss_coral,
-            'Total Loss': loss_total,
+            'SVHN Loss': loss_svhn,
+            'MNIST Loss': loss_mnist,
+            'Total Loss': loss_total
         })
 
         model.eval()
@@ -103,8 +96,8 @@ def main():
             print(group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            tester(source_loader_test, 'SVHN')
-            tester(target_loader_test, 'MNIST')
+            tester(svhn_loader_test, 'SVHN')
+            tester(mnist_loader_test, 'MNIST')
 
 if __name__ == '__main__':
     main()

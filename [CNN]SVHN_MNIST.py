@@ -6,7 +6,6 @@ import torch.nn.functional as F
 import numpy as np
 import wandb
 from tqdm import tqdm
-from functions.coral_loss import coral_loss
 from dataloader.data_loader import data_loader
 from model.SimpleCNN import CNN32
 
@@ -27,7 +26,7 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CORAL]_S:" + args.source + "_T:" + args.target
+               name="[CNN]_S:" + args.source + "_T:" + args.target
                     + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
@@ -36,7 +35,7 @@ def main():
 
     print("Data load complete, start training")
 
-    model = CNN32(num_classes=10).to(device)
+    model = CNN32().to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
     criterion = nn.CrossEntropyLoss()
@@ -44,43 +43,26 @@ def main():
     for epoch in range(num_epochs):
         model.train()
         i = 0
-        loss_classification = 0
-        loss_coral = 0
         loss_total = 0
 
-        for source_data, target_data in zip(source_loader, tqdm(target_loader)):
+        for source_data in tqdm(source_loader):
             source_images, source_labels = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
-            target_images, _ = target_data
-            target_images = target_images.to(device)
 
-            # Forward pass for source domain (SVHN)
             source_features, source_outputs = model(source_images)
-            classification_loss = criterion(source_outputs, source_labels)
-
-            # Forward pass for target domain (MNIST)
-            target_features, _ = model(target_images)
-            coral_loss_value = coral_loss(source_features, target_features)
-
-            # Total loss (classification loss + CORAL loss)
-            total_loss = classification_loss + coral_loss_value
+            loss = criterion(source_outputs, source_labels)
 
             # Backward and optimize
             optimizer.zero_grad()
-            total_loss.backward()
+            loss.backward()
             optimizer.step()
 
-            loss_classification += classification_loss.item()
-            loss_coral += coral_loss_value.item()
-            loss_total += total_loss.item()
+            loss_total += loss.item()
 
             i += 1
 
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Classification Loss: {loss_classification:.4f}, '
-              f'Coral Loss: {loss_coral:.4f}, Total Loss: {loss_total:.4f}')
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Total Loss: {loss_total:.4f}')
         wandb.log({
-            'Classification Loss': loss_classification,
-            'Coral Loss': loss_coral,
             'Total Loss': loss_total,
         })
 

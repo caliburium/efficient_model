@@ -4,10 +4,5 @@
 
 # python Control_CNN.py --mode combine --channel 64 --linear 20
 
-python [Control]DANN+Pretrain+dis_lr.py --dis_lr 0.01
-python [Control]DANN+Pretrain+dis_lr.py --dis_lr 0.025
-python [Control]DANN+Pretrain+dis_lr.py --dis_lr 0.05
-python [Control]DANN+Pretrain+dis_lr.py --dis_lr 0.075
-python [Control]DANN+Pretrain+dis_lr.py --dis_lr 0.1
-python [Control]DANN+Pretrain+dis_lr.py --dis_lr 0.2
-python [Control]DANN+Pretrain+dis_lr.py --dis_lr 0.5
+python [DANN]SVHN_MNIST.py
+

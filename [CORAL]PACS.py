@@ -1,4 +1,5 @@
 import argparse
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,28 +8,31 @@ import numpy as np
 import wandb
 from tqdm import tqdm
 from functions.coral_loss import coral_loss
-from dataloader.data_loader import data_loader
+from dataloader.pacs_loader import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class SimpleCNN(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self):
         super(SimpleCNN, self).__init__()
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=5),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(3, 64, 5, 3),  # 228 -> 75
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(64, 128, kernel_size=5),
-            nn.BatchNorm2d(128),
+            nn.MaxPool2d(3, 2),  # 75 -> 37
+            nn.Conv2d(64, 64, 5, 3),  # 37 -> 11
             nn.ReLU(),
-            nn.MaxPool2d(2)
+            nn.MaxPool2d(3, 2),  # 11 -> 5
+            nn.Conv2d(64, 128, 5),  # 5 -> 1
+            nn.ReLU()
         )
         self.classifier = nn.Sequential(
-            nn.Linear(128 * 5 * 5, 512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes)
+            nn.Linear(128 * 1 * 1, 1024),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(inplace=True),
+            nn.Linear(1024, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 7)
         )
 
     def forward(self, x):
@@ -48,14 +52,19 @@ def main():
 
     num_epochs = args.epoch
     # Initialize Weights and Biases
-    wandb.init(project="EM_Domain",
+    wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="CORAL_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CORAL]_S:" + args.source + "_T:" + args.target
+                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
-    source_loader, source_loader_test = data_loader(args.source, args.batch_size)
-    target_loader, target_loader_test = data_loader(args.target, args.batch_size)
+    # Photo, Art_Painting, Cartoon, Sketch
+    train_loader = pacs_loader(split='train', batch_size=args.batch_size, download=True)
+    photo_loader_test = pacs_loader(split='test', domain=0, batch_size=args.batch_size, download=True)
+    art_loader_test = pacs_loader(split='test', domain=1, batch_size=args.batch_size, download=True)
+    cartoon_loader_test = pacs_loader(split='test', domain=2, batch_size=args.batch_size, download=True)
+    sketch_loader_test = pacs_loader(split='test', domain=3, batch_size=args.batch_size, download=True)
 
     print("Data load complete, start training")
 
