@@ -30,9 +30,9 @@ class CNN32(nn.Module):
         logits = self.classifier(features)
         return features, logits
 
-class CNN227(nn.Module):
+class CNN228(nn.Module):
     def __init__(self, num_classes=10):
-        super(CNN32, self).__init__()
+        super(CNN228, self).__init__()
 
         # 1st Convolutional Layer
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, padding=1)

@@ -4,5 +4,7 @@
 
 # python Control_CNN.py --mode combine --channel 64 --linear 20
 
-python [DANN]SVHN_MNIST.py
+python [CORAL]SVHN_MNIST.py
+python [CORAL]SVHN_MNIST.py
+python [CORAL]SVHN_MNIST.py
 
