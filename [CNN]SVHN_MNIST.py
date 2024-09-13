@@ -15,10 +15,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--source', type=str, default='SVHN')
     parser.add_argument('--target', type=str, default='MNIST')
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr', type=float, default=0.001)
     args = parser.parse_args()
 
     num_epochs = args.epoch

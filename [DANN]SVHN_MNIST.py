@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 import wandb
 from tqdm import tqdm
-from functions import ReverseLayerF, lr_lambda
+from functions.lr_lambda import lr_lambda
 from dataloader.data_loader import data_loader
 from model.SimpleCNN import CNN32
 from model.Discriminator import Discriminator32
@@ -18,11 +18,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
     parser.add_argument('--pretrain_epoch', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--source', type=str, default='SVHN')
     parser.add_argument('--target', type=str, default='MNIST')
-    parser.add_argument('--lr_cls', type=float, default=0.01)
-    parser.add_argument('--lr_dom', type=float, default=0.1)
+    parser.add_argument('--lr_cls', type=float, default=0.001)
+    parser.add_argument('--lr_dom', type=float, default=0.01)
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch
@@ -171,7 +171,7 @@ def main():
                 images = images.to(device)
 
                 features, _ = model(images)
-                domain_output = discriminator(features, alpha=0.0)
+                domain_output = discriminator(features, lambda_p=0.0)
                 preds = F.log_softmax(domain_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)

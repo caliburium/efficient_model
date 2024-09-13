@@ -6,22 +6,27 @@ class CNN32(nn.Module):
         super(CNN32, self).__init__()
 
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, kernel_size=3),
+            nn.Conv2d(3, 64, kernel_size=5, stride=1, padding=2),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(64, 128, kernel_size=3),
+            nn.MaxPool2d(stride=2, kernel_size=3, padding=1),
+            nn.Conv2d(64, 64, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(stride=2, kernel_size=3, padding=1),
+            nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(128),
             nn.ReLU()
         )
         self.classifier = nn.Sequential(
-            nn.Linear(128 * 5 * 5, 512),
+            nn.Linear(128 * 8 * 8, 3072),
+            nn.BatchNorm1d(3072),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(512, num_classes)
+            nn.Linear(3072, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(),
+            nn.Linear(2048, num_classes)
         )
 
     def forward(self, x):

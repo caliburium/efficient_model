@@ -7,13 +7,13 @@ class Discriminator32(nn.Module):
         super(Discriminator32, self).__init__()
 
         self.discriminator = nn.Sequential(
-            nn.Linear(128 * 5 * 5, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(128 * 8 * 8, 3072),
+            nn.BatchNorm1d(3072),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
+            nn.Linear(3072, 2048),
+            nn.BatchNorm1d(2048),
             nn.ReLU(inplace=True),
-            nn.Linear(256, num_domains)
+            nn.Linear(2048, num_domains)
         )
 
     def forward(self, x, lambda_p):
