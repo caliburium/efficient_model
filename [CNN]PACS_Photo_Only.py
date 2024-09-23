@@ -24,14 +24,11 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CNN]_PACS" + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CNN]_PACS_Photo" + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
-    # domain 'train' = artpaintings, cartoon, sketch
-    source_loader = pacs_loader(split='train', domain='train', batch_size=args.batch_size)
-    art_loader = pacs_loader(split='test', domain='artpaintings', batch_size=args.batch_size)
-    cartoon_loader = pacs_loader(split='test', domain='cartoon', batch_size=args.batch_size)
-    sketch_loader = pacs_loader(split='test', domain='sketch', batch_size=args.batch_size)
+    # train = artpaintings, cartoon, sketch / acsp = 0123
+    source_loader = pacs_loader(split='train', domain='photo', batch_size=args.batch_size)
     target_loader = pacs_loader(split='test', domain='photo', batch_size=args.batch_size)
 
     print("Data load complete, start training")
@@ -85,9 +82,6 @@ def main():
             print(group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            tester(art_loader, 'Art Paintings')
-            tester(cartoon_loader, 'Cartoon')
-            tester(sketch_loader, 'Sketch')
             tester(target_loader, 'Photo')
 
 if __name__ == '__main__':

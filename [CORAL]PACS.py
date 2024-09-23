@@ -8,45 +8,16 @@ import numpy as np
 import wandb
 from tqdm import tqdm
 from functions.coral_loss import coral_loss
-from dataloader.pacs_loader import *
+from dataloader.pacs_loader import pacs_loader
+from model.SimpleCNN import CNN228
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class SimpleCNN(nn.Module):
-    def __init__(self):
-        super(SimpleCNN, self).__init__()
-        self.feature_extractor = nn.Sequential(
-            nn.Conv2d(3, 64, 5, 3),  # 228 -> 75
-            nn.ReLU(),
-            nn.MaxPool2d(3, 2),  # 75 -> 37
-            nn.Conv2d(64, 64, 5, 3),  # 37 -> 11
-            nn.ReLU(),
-            nn.MaxPool2d(3, 2),  # 11 -> 5
-            nn.Conv2d(64, 128, 5),  # 5 -> 1
-            nn.ReLU()
-        )
-        self.classifier = nn.Sequential(
-            nn.Linear(128 * 1 * 1, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 7)
-        )
-
-    def forward(self, x):
-        features = self.feature_extractor(x)
-        features = features.view(features.size(0), -1)
-        logits = self.classifier(features)
-        return features, logits
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--source', type=str, default='SVHN')
-    parser.add_argument('--target', type=str, default='MNIST')
+    parser.add_argument('--epoch', type=int, default=200)
+    parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
@@ -55,20 +26,20 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CORAL]_S:" + args.source + "_T:" + args.target
-                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CORAL]_PACS" + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
-    # Photo, Art_Painting, Cartoon, Sketch
-    train_loader = pacs_loader(split='train', batch_size=args.batch_size, download=True)
-    photo_loader_test = pacs_loader(split='test', domain=0, batch_size=args.batch_size, download=True)
-    art_loader_test = pacs_loader(split='test', domain=1, batch_size=args.batch_size, download=True)
-    cartoon_loader_test = pacs_loader(split='test', domain=2, batch_size=args.batch_size, download=True)
-    sketch_loader_test = pacs_loader(split='test', domain=3, batch_size=args.batch_size, download=True)
+    # train = artpaintings, cartoon, sketch
+    source_loader = pacs_loader(split='train', domain='train', batch_size=args.batch_size)
+    photo_train_loader = pacs_loader(split='train', domain='photo', batch_size=args.batch_size)
+    art_loader = pacs_loader(split='test', domain='artpaintings', batch_size=args.batch_size)
+    cartoon_loader = pacs_loader(split='test', domain='cartoon', batch_size=args.batch_size)
+    sketch_loader = pacs_loader(split='test', domain='sketch', batch_size=args.batch_size)
+    photo_test_loader = pacs_loader(split='test', domain='photo', batch_size=args.batch_size)
 
     print("Data load complete, start training")
 
-    model = SimpleCNN().to(device)
+    model = CNN228().to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
     criterion = nn.CrossEntropyLoss()
 
@@ -78,28 +49,27 @@ def main():
         loss_classification = 0
         loss_coral = 0
         loss_total = 0
+        scaler = torch.cuda.amp.GradScaler()
 
-        for source_data, target_data in zip(source_loader, tqdm(target_loader)):
-            source_images, source_labels = source_data
+        for source_data, target_data in zip(source_loader, tqdm(photo_train_loader)):
+            optimizer.zero_grad()
+
+            source_images, source_labels, _ = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
-            target_images, _ = target_data
+            target_images, _, _ = target_data
             target_images = target_images.to(device)
 
-            # Forward pass for source domain (SVHN)
-            source_features, source_outputs = model(source_images)
-            classification_loss = criterion(source_outputs, source_labels)
+            with torch.cuda.amp.autocast():
+                source_features, source_outputs = model(source_images)
+                classification_loss = criterion(source_outputs, source_labels)
+                target_features, _ = model(target_images)
+                torch.cuda.empty_cache()
+                coral_loss_value = coral_loss(source_features, target_features)
+                total_loss = classification_loss + coral_loss_value
 
-            # Forward pass for target domain (MNIST)
-            target_features, _ = model(target_images)
-            coral_loss_value = coral_loss(source_features, target_features)
-
-            # Total loss (classification loss + CORAL loss)
-            total_loss = classification_loss + coral_loss_value
-
-            # Backward and optimize
-            optimizer.zero_grad()
-            total_loss.backward()
-            optimizer.step()
+            scaler.scale(total_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             loss_classification += classification_loss.item()
             loss_coral += coral_loss_value.item()
@@ -119,7 +89,7 @@ def main():
 
         def tester(loader, group):
             correct, total = 0, 0
-            for images, labels in loader:
+            for images, labels, _ in loader:
                 images, labels = images.to(device), labels.to(device)
 
                 _ , class_output = model(images)
@@ -134,8 +104,10 @@ def main():
             print(group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            tester(source_loader_test, 'Source')
-            tester(target_loader_test, 'Target')
+            tester(art_loader, 'Art Paintings')
+            tester(cartoon_loader, 'Cartoon')
+            tester(sketch_loader, 'Sketch')
+            tester(photo_test_loader, 'Photo')
 
 if __name__ == '__main__':
     main()

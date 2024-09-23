@@ -1,75 +1,26 @@
 import argparse
-
-import deeplake
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from functions.ReverseLayerF import *
 from functions.lr_lambda import *
 import wandb
 import numpy as np
 from tqdm import tqdm
-from dataloader.pacs_loader import *
+from dataloader.pacs_loader import pacs_loader
+from model.SimpleCNN import CNN228
+from model.Discriminator import Discriminator228
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-class DANN(nn.Module):
-    def __init__(self):
-        super(DANN, self).__init__()
-        self.restored = False
-
-        self.feature = nn.Sequential(
-            nn.Conv2d(3, 64, 5, 3),  # 228 -> 75
-            nn.ReLU(),
-            nn.MaxPool2d(3, 2),  # 75 -> 37
-            nn.Conv2d(64, 64, 5, 3),  # 37 -> 11
-            nn.ReLU(),
-            nn.MaxPool2d(3, 2),  # 11 -> 5
-            nn.Conv2d(64, 128, 5),  # 5 -> 1
-            nn.ReLU()
-        )
-
-        self.classifier = nn.Sequential(
-            nn.Linear(128 * 1 * 1, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 7)
-        )
-
-        self.discriminator = nn.Sequential(
-            nn.Linear(128 * 1 * 1, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 4)
-        )
-
-    def forward(self, input_data, reverse=True, alpha=1.0):
-        input_data = input_data.expand(input_data.data.shape[0], 3, 228, 228)
-        feature = self.feature(input_data)
-        feature = feature.view(-1, 128 * 1 * 1)
-        class_output = self.classifier(feature)
-        if reverse:
-            reverse_feature = ReverseLayerF.apply(feature, alpha)
-            domain_output = self.discriminator(reverse_feature)
-        else:
-            domain_output = self.discriminator(feature)
-
-        return class_output, domain_output
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--pretrain_epoch', type=int, default=10)
-    parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--lr_cls', type=float, default=0.01)
+    parser.add_argument('--lr_dom', type=float, default=0.1)
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch
@@ -79,74 +30,58 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[DANN]_PACS_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[DANN]_PACS_lr(cls):" + str(args.lr_cls) + "_lr(dom)" + str(args.lr_dom)
+                    + "_Batch:" + str(args.batch_size)
                )
 
-    pacs_train = deeplake.load("hub://activeloop/pacs-train")
-    pacs_test = deeplake.load("hub://activeloop/pacs-test")
-
     # Photo, Art_Painting, Cartoon, Sketch
-    train_loader = pacs_loader(split='train', batch_size=args.batch_size, download=True)
-    photo_loader_test = pacs_loader(split='test', domain=0, batch_size=args.batch_size, download=True)
-    art_loader_test = pacs_loader(split='test', domain=1, batch_size=args.batch_size, download=True)
-    cartoon_loader_test = pacs_loader(split='test', domain=2, batch_size=args.batch_size, download=True)
-    sketch_loader_test = pacs_loader(split='test', domain=3, batch_size=args.batch_size, download=True)
+    source_loader = pacs_loader(split='train', domain='train', batch_size=args.batch_size)
+    photo_train_loader = pacs_loader(split='train', domain='photo', batch_size=args.batch_size)
+    art_loader = pacs_loader(split='test', domain='artpaintings', batch_size=args.batch_size)
+    cartoon_loader = pacs_loader(split='test', domain='cartoon', batch_size=args.batch_size)
+    sketch_loader = pacs_loader(split='test', domain='sketch', batch_size=args.batch_size)
+    photo_loader = pacs_loader(split='test', domain='photo', batch_size=args.batch_size)
 
     print("Data load complete, start training")
 
-    model = DANN().to(device)
+    model = CNN228(num_classes=7).to(device)
+    discriminator = Discriminator228(num_domains=4).to(device)
 
-    pre_opt = optim.Adam(model.parameters(), lr=0.01)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    pre_opt = optim.Adam(model.parameters(), lr=1e-5)
+    optimizer_cls = optim.SGD(list(model.feature_extractor.parameters())
+                              + list(model.classifier.parameters()), lr=args.lr_cls, momentum=0.9, weight_decay=1e-6)
+    optimizer_dom = optim.SGD(list(model.feature_extractor.parameters())
+                              + list(discriminator.discriminator.parameters()), lr=args.lr_dom, momentum=0.9, weight_decay=1e-6)
+    scheduler_cls = optim.lr_scheduler.LambdaLR(optimizer_cls, lr_lambda)
+    scheduler_dom = optim.lr_scheduler.LambdaLR(optimizer_dom, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(pre_epochs):
-        model.train()  # Set the model to training mode
-        total_loss = 0  # Initialize total loss for the epoch
-        total_loss_l = 0  # Initialize total classification loss for the epoch
-        total_loss_d = 0  # Initialize total domain loss for the epoch
+        model.train()
+        i = 0
 
-        for i, train_data in enumerate(train_loader):
-            # Calculate the progress parameter `p`
-            p = float(i + epoch * len(train_loader)) / num_epochs / len(train_loader)
-            lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
+        for source_data in source_loader:
+            # Training with source data
+            source_images, source_labels, _ = source_data
+            source_images, source_labels = source_images.to(device), source_labels.to(device)
 
-            images, labels, domain = train_data
-            images = images.to(device)
-            labels = labels.to(device).long().squeeze()  # Ensure labels are LongTensor and 1D
-            domain = domain.to(device).long().squeeze()  # Ensure domain is LongTensor and 1D
+            _, class_output = model(source_images)
+            loss = criterion(class_output, source_labels)
 
-            # Forward pass
-            class_output, domain_output = model(images, False, alpha=lambda_p)
-
-            # Compute losses
-            loss_l = criterion(class_output, labels)
-            loss_d = criterion(domain_output, domain)
-            loss = loss_l + loss_d
-
-            # Accumulate total loss for the epoch
-            total_loss += loss.item()
-            total_loss_l += loss_l.item()
-            total_loss_d += loss_d.item()
-
-            # Backpropagation and optimization
             pre_opt.zero_grad()
             loss.backward()
             pre_opt.step()
 
-        # Update the learning rate
-        scheduler.step()
+            label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
 
-        # Print average loss per epoch
-        avg_loss = total_loss / len(train_loader)
-        avg_loss_l = total_loss_l / len(train_loader)
-        avg_loss_d = total_loss_d / len(train_loader)
+            print(f'Batches [{i + 1}/{len(source_loader)}], '
+                  f'Pretrain Loss: {loss.item():.4f}, '
+                  f'Pretrain Accuracy: {label_acc * 100:.3f}%, '
+                  )
 
-        print(
-            f"Epoch [{epoch + 1}/{pre_epochs}], Total Loss: {avg_loss:.4f}, Classification Loss: {avg_loss_l:.4f}, Domain Loss: {avg_loss_d:.4f}")
+            i += 1
 
-        model.eval()  # Set the model to evaluation mode
+        model.eval()
 
     print("Pretrain Finished")
 
@@ -154,89 +89,106 @@ def main():
         model.train()
         i = 0
 
-        loss_domain_epoch = 0
+        loss_tgt_domain_epoch = 0
+        loss_src_domain_epoch = 0
         loss_label_epoch = 0
 
-        for train_data in tqdm(train_loader):
-            p = (float(i + epoch * len(train_data)) / num_epochs / len(train_data))
+        for source_data, target_data in zip(source_loader, tqdm(photo_train_loader)):
+            p = (float(i + epoch * min(len(source_loader), len(photo_train_loader))) /
+                 num_epochs / min(len(source_loader), len(photo_train_loader)))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
-            images, labels, domain = train_data
-            images, labels, domain = images.to(device), labels.to(device), domain.to(device)
+            source_images, source_labels, source_domain = source_data
+            source_images, source_labels, source_domain = source_images.to(device), source_labels.to(device), source_domain.to(device)
 
-            class_output, domain_output = model(images, True, alpha=lambda_p)
-            loss_l = criterion(class_output, labels.squeeze())
-            loss_d = criterion(domain_output, domain.squeeze())
-            loss = loss_l + loss_d
+            target_images, _, target_domain = target_data
+            target_images, target_domain = target_images.to(device), target_domain.to(device)
 
-            optimizer.zero_grad()
+            optimizer_cls.zero_grad()
+            optimizer_dom.zero_grad()
+
+            source_feature, source_class_out = model(source_images)
+            source_domain_out = discriminator(source_feature, lambda_p=lambda_p)
+            target_feature, _ = model(target_images)
+            target_domain_out = discriminator(target_feature, lambda_p=lambda_p)
+
+            label_src_loss = criterion(source_class_out, source_labels)
+            domain_src_loss = criterion(source_domain_out, source_domain)
+            domain_tgt_loss = criterion(target_domain_out, target_domain)
+
+            loss_label_epoch += label_src_loss.item()
+            loss_src_domain_epoch += domain_src_loss.item()
+            loss_tgt_domain_epoch += domain_tgt_loss.item()
+
+            loss = label_src_loss + domain_src_loss + domain_tgt_loss
+
             loss.backward()
-            optimizer.step()
-
-            loss_label_epoch += loss_l.item()
-            loss_domain_epoch += loss_d.item()
+            optimizer_cls.step()
+            optimizer_dom.step()
 
             i += 1
 
-        scheduler.step()
+        scheduler_cls.step()
+        scheduler_dom.step()
 
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
+              f'Domain source Loss: {loss_src_domain_epoch:.4f}, '
+              f'Domain target Loss: {loss_tgt_domain_epoch:.4f}, '
               f'Label Loss: {loss_label_epoch:.4f}, '
-              f'Domain Loss: {loss_domain_epoch:.4f}, '
-              f'Total Loss: {loss_label_epoch + loss_domain_epoch:.4f}, '
+              f'Total Loss: {loss_src_domain_epoch + loss_tgt_domain_epoch + loss_label_epoch:.4f}, '
               )
 
         wandb.log({
+            'Domain source Loss': loss_src_domain_epoch,
+            'Domain target Loss': loss_tgt_domain_epoch,
             'Label Loss': loss_label_epoch,
-            'Domain Loss': loss_domain_epoch,
-            'Total Loss': loss_label_epoch + loss_domain_epoch,
+            'Total Loss': loss_src_domain_epoch + loss_tgt_domain_epoch + loss_label_epoch,
         })
 
         model.eval()
 
         def lc_tester(loader, group):
             correct, total = 0, 0
-            for image, label, _ in loader:
-                image = image.to(device)
-                label = label.to(device).long()  # Ensure label is LongTensor
+            for images, labels, _ in loader:
+                images, labels = images.to(device), labels.to(device)
 
-                class_output, _ = model(image, alpha=0.0)
+                _, class_output = model(images)
                 preds = F.log_softmax(class_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
-                total += label.size(0)
-                correct += (predicted == label).sum().item()
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
 
             accuracy = correct / total
-            wandb.log({'[Label] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
-            print('[Label] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
+            wandb.log({group + ' Accuracy': accuracy}, step=epoch + 1)
+            print(group + f' Accuracy: {accuracy * 100:.3f}%')
 
         def dc_tester(loader, group):
             correct, total = 0, 0
-            for image, _, domain in loader:
-                image = image.to(device)
-                domain = domain.to(device).long()  # Ensure domain is LongTensor
+            for images, _, domains in loader:
+                images, domains = images.to(device), domains.to(device)
 
-                _, domain_output = model(image, alpha=0.0)
+                features, _ = model(images)
+                domain_output = discriminator(features, lambda_p=0.0)
                 preds = F.log_softmax(domain_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
-                total += domain.size(0)
-                correct += (predicted == domain).sum().item()
+                total += images.size(0)
+                correct += (predicted == domains).sum().item()
 
             accuracy = correct / total
             wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
             print('[Domain] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            lc_tester(photo_loader_test, 'Photo')
-            lc_tester(art_loader_test, 'Art')
-            lc_tester(cartoon_loader_test, 'Cartoon')
-            lc_tester(sketch_loader_test, 'Sketch')
-            dc_tester(photo_loader_test, 'Photo')
-            dc_tester(art_loader_test, 'Art')
-            dc_tester(cartoon_loader_test, 'Cartoon')
-            dc_tester(sketch_loader_test, 'Sketch')
+            lc_tester(art_loader, 'Art Paintings')
+            lc_tester(cartoon_loader, 'Cartoon')
+            lc_tester(sketch_loader, 'Sketch')
+            lc_tester(photo_loader, 'Photo')
+            dc_tester(art_loader, 'Art Paintings')
+            dc_tester(cartoon_loader, 'Cartoon')
+            dc_tester(sketch_loader, 'Sketch')
+            dc_tester(photo_loader, 'Photo')
 
 
 if __name__ == '__main__':

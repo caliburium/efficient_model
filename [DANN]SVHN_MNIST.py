@@ -59,9 +59,6 @@ def main():
         i = 0
 
         for source_data in source_loader:
-            p = (float(i + epoch * len(source_loader)) / num_epochs / len(source_loader))
-            lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
-
             # Training with source data
             source_images, source_labels = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
