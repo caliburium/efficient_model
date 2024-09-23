@@ -67,6 +67,6 @@ class CNN228(nn.Module):
 
         # Fully connected layers with ReLU activation
         x = F.relu(self.fc1(feature))
-        x = self.fc2(x)
+        logits = self.fc2(x)
 
-        return feature, x
+        return feature, logits

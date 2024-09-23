@@ -1,7 +1,6 @@
 import os
+import torch
 import numpy as np
-import gzip
-import shutil
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -9,55 +8,52 @@ import deeplake
 
 
 class PACS_Dataset(Dataset):
-    def __init__(self, split, domain=None, transform=None, download=False, root='./data'):
+    VALID_DOMAINS = {
+        'train': [0, 1, 2],  # Artpaintings, Cartoon, Sketch
+        'artpaintings': 0,
+        'cartoon': 1,
+        'sketch': 2,
+        'photo': 3
+    }
+
+    def __init__(self, split, domain=None, transform=None, download=True, root='./data'):
         self.split = split
         self.domain = domain
         self.transform = transform
-        self.root = os.path.join(root, f'pacs_{split}.gz')
+        self.root = os.path.join(root, f'pacs_{split}')
+        os.makedirs(self.root, exist_ok=True)
 
-        if download:
+        if download and not self._data_exists():
             self._download_data()
 
-        self.extracted_root = os.path.join(root, f'pacs_{split}_extracted')
-        os.makedirs(self.extracted_root, exist_ok=True)
-
-        self.image_paths, self.label_paths = self._load_extracted_data()
+        self.image_paths, self.label_paths = self._load_data()
         self.length = len(self.image_paths)
 
         if self.domain is not None:
             self._filter_by_domain()
 
+    def _data_exists(self):
+        """ Check if the dataset is already downloaded locally. """
+        return os.path.exists(self.root) and len(os.listdir(self.root)) > 0
+
     def _download_data(self):
-        if os.path.exists(self.root):
-            print(f"Dataset {self.root} already exists. Skipping download.")
-            return
-
         print(f"Downloading and processing dataset into {self.root}...")
-
-        os.makedirs(os.path.dirname(self.root), exist_ok=True)
-
-        # Load Deep Lake datasets
-        pacs_train = deeplake.load("hub://activeloop/pacs-train")
-        pacs_test = deeplake.load("hub://activeloop/pacs-test")
-        pacs_val = deeplake.load("hub://activeloop/pacs-val")  # Assume a validation dataset exists
 
         # Save datasets locally
         if self.split == 'train':
+            pacs_train = deeplake.load("hub://activeloop/pacs-train")
             self._save_dataset(pacs_train, "train")
         elif self.split == 'test':
+            pacs_test = deeplake.load("hub://activeloop/pacs-test")
             self._save_dataset(pacs_test, "test")
         elif self.split == 'val':
+            pacs_val = deeplake.load("hub://activeloop/pacs-val")
             self._save_dataset(pacs_val, "val")
 
-        self._compress_data()
-
     def _save_dataset(self, deeplake_dataset, split_name):
-        temp_dir = os.path.join(os.path.dirname(self.root), f'pacs_{split_name}_temp')
-        os.makedirs(temp_dir, exist_ok=True)
-
         for i, data_item in enumerate(deeplake_dataset):
-            image_path = os.path.join(temp_dir, f"{split_name}_img_{i}.png")
-            label_path = os.path.join(temp_dir, f"{split_name}_label_domain_{i}.npz")
+            image_path = os.path.join(self.root, f"{split_name}_img_{i}.png")
+            label_path = os.path.join(self.root, f"{split_name}_label_domain_{i}.npz")
 
             images = data_item['images'].numpy()
             labels = data_item['labels'].numpy().astype(np.int64)
@@ -69,30 +65,26 @@ class PACS_Dataset(Dataset):
             # Save labels and domains
             np.savez(label_path, labels=labels, domains=domains)
 
-    def _compress_data(self):
-        with gzip.open(self.root, 'wb') as f_out:
-            shutil.make_archive(base_name=self.extracted_root, format='gztar', root_dir=self.extracted_root)
-            with open(f"{self.extracted_root}.tar.gz", 'rb') as f_in:
-                shutil.copyfileobj(f_in, f_out)
-        print(f"Dataset compressed and saved as {self.root}.")
-        shutil.rmtree(self.extracted_root)  # Remove temporary extraction directory
-
-    def _load_extracted_data(self):
-        if not os.path.exists(self.extracted_root):
-            print(f"Extracting {self.root}...")
-            with gzip.open(self.root, 'rb') as f_in:
-                with open(f"{self.extracted_root}.tar.gz", 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-            shutil.unpack_archive(f"{self.extracted_root}.tar.gz", self.extracted_root, 'gztar')
-
+    def _load_data(self):
+        """ Load images and labels from the local directory. """
         image_paths = sorted(
-            [os.path.join(self.extracted_root, f) for f in os.listdir(self.extracted_root) if f.endswith(".png")])
+            [os.path.join(self.root, f) for f in os.listdir(self.root) if f.endswith(".png")])
         label_paths = sorted(
-            [os.path.join(self.extracted_root, f) for f in os.listdir(self.extracted_root) if f.endswith(".npz")])
+            [os.path.join(self.root, f) for f in os.listdir(self.root) if f.endswith(".npz")])
 
         return image_paths, label_paths
 
     def _filter_by_domain(self):
+        if self.domain == 'train':
+            valid_domains = self.VALID_DOMAINS['train']
+        else:
+            if isinstance(self.domain, int) and self.domain in self.VALID_DOMAINS.values():
+                valid_domains = [self.domain]
+            elif isinstance(self.domain, str) and self.domain.lower() in self.VALID_DOMAINS:
+                valid_domains = [self.VALID_DOMAINS[self.domain.lower()]]
+            else:
+                raise ValueError(f"Invalid domain: {self.domain}. Valid domains are 'artpaintings', 'cartoon', 'sketch', 'photo', or 'train'.")
+
         filtered_image_paths = []
         filtered_label_paths = []
 
@@ -100,12 +92,13 @@ class PACS_Dataset(Dataset):
             label_domain_data = np.load(lbl_path)
             domains = label_domain_data['domains']
 
-            if domains == self.domain:
+            if domains in valid_domains:
                 filtered_image_paths.append(img_path)
                 filtered_label_paths.append(lbl_path)
 
         self.image_paths = filtered_image_paths
         self.label_paths = filtered_label_paths
+        self.length = len(self.image_paths)
 
     def __len__(self):
         return self.length
@@ -122,18 +115,21 @@ class PACS_Dataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
+        labels = torch.tensor(labels).squeeze()
+        domains = torch.tensor(domains).squeeze()
+
         return image, labels, domains
 
 
-def pacs_loader(split, domain=None, batch_size=32, transform=None, download=False, root='./data'):
+def pacs_loader(split, domain=None, batch_size=128, transform=None):
     if transform is None:
         transform = transforms.Compose([
-            transforms.Resize((227, 227)),
+            transforms.Resize((228, 228)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
-    dataset = PACS_Dataset(split=split, domain=domain, transform=transform, download=download, root=root)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=(split == 'train'), num_workers=0)
+    dataset = PACS_Dataset(split=split, domain=domain, transform=transform, download=True)
+    loader = DataLoader(dataset, drop_last=True, batch_size=batch_size, shuffle=True, num_workers=0)
 
     return loader

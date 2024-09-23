@@ -21,8 +21,8 @@ def main():
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--source', type=str, default='SVHN')
     parser.add_argument('--target', type=str, default='MNIST')
-    parser.add_argument('--lr_cls', type=float, default=0.001)
-    parser.add_argument('--lr_dom', type=float, default=0.01)
+    parser.add_argument('--lr_cls', type=float, default=0.01)
+    parser.add_argument('--lr_dom', type=float, default=0.1)
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch
