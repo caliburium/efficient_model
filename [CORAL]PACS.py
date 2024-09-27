@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import numpy as np
 import wandb
 from tqdm import tqdm
 from functions.coral_loss import coral_loss
@@ -17,7 +16,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
@@ -26,7 +25,7 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CORAL]_PACS" + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CORAL]logits_PACS" + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     # train = artpaintings, cartoon, sketch
@@ -49,27 +48,22 @@ def main():
         loss_classification = 0
         loss_coral = 0
         loss_total = 0
-        scaler = torch.cuda.amp.GradScaler()
 
         for source_data, target_data in zip(source_loader, tqdm(photo_train_loader)):
-            optimizer.zero_grad()
-
             source_images, source_labels, _ = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
             target_images, _, _ = target_data
             target_images = target_images.to(device)
 
-            with torch.cuda.amp.autocast():
-                source_features, source_outputs = model(source_images)
-                classification_loss = criterion(source_outputs, source_labels)
-                target_features, _ = model(target_images)
-                torch.cuda.empty_cache()
-                coral_loss_value = coral_loss(source_features, target_features)
-                total_loss = classification_loss + coral_loss_value
+            source_features, source_outputs = model(source_images)
+            classification_loss = criterion(source_outputs, source_labels)
+            target_features, target_outputs = model(target_images)
+            coral_loss_value = coral_loss(source_outputs, target_outputs)
+            total_loss = classification_loss + coral_loss_value
 
-            scaler.scale(total_loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
 
             loss_classification += classification_loss.item()
             loss_coral += coral_loss_value.item()

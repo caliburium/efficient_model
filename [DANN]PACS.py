@@ -17,10 +17,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--pretrain_epoch', type=int, default=1)
+    parser.add_argument('--pretrain_epoch', type=int, default=3)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--lr_cls', type=float, default=0.01)
-    parser.add_argument('--lr_dom', type=float, default=0.1)
+    parser.add_argument('--lr_dom', type=float, default=0.01)
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch

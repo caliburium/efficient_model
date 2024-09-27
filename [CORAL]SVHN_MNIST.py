@@ -27,7 +27,7 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CORAL]_S:" + args.source + "_T:" + args.target
+               name="[CORAL]Feature_S:" + args.source + "_T:" + args.target
                     + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
@@ -55,12 +55,12 @@ def main():
             target_images = target_images.to(device)
 
             # Forward pass for source domain (SVHN)
-            _, source_outputs = model(source_images)
+            source_features, source_outputs = model(source_images)
             classification_loss = criterion(source_outputs, source_labels)
 
             # Forward pass for target domain (MNIST)
-            _, target_outputs = model(target_images)
-            coral_loss_value = coral_loss(source_outputs, target_outputs)
+            target_features, target_outputs = model(target_images)
+            coral_loss_value = coral_loss(source_features, target_features)
 
             # Total loss (classification loss + CORAL loss)
             total_loss = classification_loss + coral_loss_value
