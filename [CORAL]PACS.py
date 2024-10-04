@@ -8,6 +8,7 @@ import wandb
 from tqdm import tqdm
 from functions.coral_loss import coral_loss
 from dataloader.pacs_loader import pacs_loader
+from model.AlexNetCaffe import AlexNetCaffe228
 from model.SimpleCNN import CNN228
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -18,6 +19,8 @@ def main():
     parser.add_argument('--epoch', type=int, default=200)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--model', type=str, default='alex') # cnn/alex
+    parser.add_argument('--coral_mode', type=str, default='logit') # feature/logit
     args = parser.parse_args()
 
     num_epochs = args.epoch
@@ -25,7 +28,8 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CORAL]logits_PACS" + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CORAL]PACS_" + args.model + '_' + args.coral_mode + "_lr:"
+                    + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     # train = artpaintings, cartoon, sketch
@@ -38,7 +42,11 @@ def main():
 
     print("Data load complete, start training")
 
-    model = CNN228().to(device)
+    if args.model == 'cnn':
+        model = CNN228(num_classes=7).to(device)
+    elif args.model == 'alex':
+        model = AlexNetCaffe228(num_classes=7).to(device)
+
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
     criterion = nn.CrossEntropyLoss()
 
@@ -58,7 +66,10 @@ def main():
             source_features, source_outputs = model(source_images)
             classification_loss = criterion(source_outputs, source_labels)
             target_features, target_outputs = model(target_images)
-            coral_loss_value = coral_loss(source_outputs, target_outputs)
+            if args.coral_mode == 'feature':
+                coral_loss_value = coral_loss(source_features, target_features)
+            elif args.coral_mode == 'logit':
+                coral_loss_value = coral_loss(source_outputs, target_outputs)
             total_loss = classification_loss + coral_loss_value
 
             optimizer.zero_grad()

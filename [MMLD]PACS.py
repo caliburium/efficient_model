@@ -11,8 +11,8 @@ import deeplake
 
 from functions.lr_lambda import lr_lambda
 from dataloader.pacs_loader import pacs_loader
-from model.AlexNetCaffe import AlexNetCaffe
-from model.Discriminator import Discriminator
+from model.AlexNetCaffe import AlexNetCaffe228
+from model.Discriminator import Discriminator228
 from clustering.kmeans_torch import KMeansTorch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
