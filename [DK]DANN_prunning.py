@@ -56,20 +56,68 @@ class DANN(nn.Module):
 
 
         self.create_partitioned_classifier()
+        print('')
 
     # Method to partition the classifier into sub-networks
     def create_partitioned_classifier(self):
-        self.partitioned_classifier = []  # 초기화
-        total_layers = len(self.classifier)
-        partition_size = total_layers // self.n_partition  # 파티션 당 레이어 개수
+        self.partitioned_classifier = []  # ModuleList로 초기화
 
-        # Partition the classifier
-        for i in range(self.n_partition):
-            start_idx = i * partition_size
-            end_idx = (i + 1) * partition_size if i != self.n_partition - 1 else total_layers
-            # Subnetwork를 nn.Sequential로 생성
-            subnetwork = nn.Sequential(*list(self.classifier.children())[start_idx:end_idx])
-            self.partitioned_classifier.append(subnetwork)
+        linear_layers = []
+        for layer in self.classifier:
+            if isinstance(layer, nn.Linear):
+                linear_layers.append(layer)
+
+        # 각 파티션에 대해 서브네트워크를 생성하면서 가중치를 공유하도록 설정
+        for p_i in range(self.n_partition):
+            partitioned_layer = nn.ModuleList()
+
+            for i, linear_layer in enumerate(linear_layers):
+                if i == 0:  # 첫 번째 레이어
+                    input_size = linear_layer.in_features
+                    output_size = linear_layer.out_features
+                    partition_size = output_size // self.n_partition
+
+                    # 서브 레이어 생성 (가중치를 공유함)
+                    sublayer = nn.Linear(input_size, partition_size)
+                    sublayer.weight = nn.Parameter(linear_layer.weight[:, p_i * partition_size:(p_i + 1) * partition_size])
+                    if linear_layer.bias is not None:
+                        sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_size:(p_i + 1) * partition_size]) # 바이어스는 그대로 공유
+
+                    partitioned_layer.append(sublayer)
+                    partitioned_layer.append(nn.BatchNorm1d(partition_size))
+                    partitioned_layer.append(nn.ReLU(inplace=True))
+
+                elif i == len(linear_layers) - 1:  # 마지막 레이어
+                    input_size = linear_layer.in_features
+                    output_size = linear_layer.out_features
+                    partition_size = input_size // self.n_partition
+
+                    # 서브 레이어 생성 (가중치를 공유함)
+                    sublayer = nn.Linear(partition_size, output_size)
+                    sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_size:(p_i + 1) * partition_size, :])
+                    if linear_layer.bias is not None:
+                        sublayer.bias = nn.Parameter(linear_layer.bias)  # 바이어스는 그대로 공유
+
+                    partitioned_layer.append(sublayer)
+
+                else:  # 중간 레이어
+                    input_size = linear_layer.in_features
+                    output_size = linear_layer.out_features
+                    partition_in_size = input_size // self.n_partition
+                    partition_out_size = output_size // self.n_partition
+
+                    # 서브 레이어 생성 (가중치를 공유함)
+                    sublayer = nn.Linear(partition_in_size, partition_out_size)
+                    sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_out_size:(p_i + 1) * partition_out_size,
+                                                                      p_i * partition_in_size:(p_i + 1) * partition_in_size])
+                    if linear_layer.bias is not None:
+                        sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_out_size:(p_i + 1) * partition_out_size])  # 바이어스는 그대로 공유
+
+                    partitioned_layer.append(sublayer)
+                    partitioned_layer.append(nn.BatchNorm1d(partition_out_size))
+                    partitioned_layer.append(nn.ReLU(inplace=True))
+
+            self.partitioned_classifier.append(partitioned_layer)
 
     def forward(self, input_data, alpha=1.0):
         input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
@@ -92,7 +140,16 @@ class DANN(nn.Module):
         partition_idx = torch.argmax(partition_switcher_output, dim=1)
 
         # run the partitioned classifier # TODO
-        class_output_partitioned = self.partitioned_classifier[partition_idx](feature)
+        class_output = []
+
+        for b_i in range(feature.size(0)):
+            xx = feature[b_i].unsqueeze(0)
+            for layer in self.partitioned_classifier[partition_idx[b_i]]:
+                xx = layer(xx)
+            class_output.append(xx)
+
+            # class_output.append(self.partitioned_classifier[partition_idx[b_i]](feature[b_i].unsqueeze(0)))
+
 
         class_output = self.classifier(feature)
 
