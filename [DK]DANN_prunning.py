@@ -14,6 +14,38 @@ from tqdm import tqdm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+class PartitionedLinear(nn.Module):
+    def __init__(self, original_layer, in_start_end_idx, out_start_end_idx, batchnorm=False):
+        super(PartitionedLinear, self).__init__()
+        self.original_layer = original_layer
+        self.in_start_end_idx = in_start_end_idx
+        self.out_start_end_idx = out_start_end_idx
+        self.batchnorm = batchnorm
+        if self.batchnorm:
+            if self.out_start_end_idx is None:
+                self.batchnorm = nn.BatchNorm1d(original_layer.out_features)
+            else:
+                self.batchnorm = nn.BatchNorm1d(self.out_start_end_idx[1] - self.out_start_end_idx[0])
+
+
+    def forward(self, x):
+        if self.in_start_end_idx is None:
+            weight = self.original_layer.weight[self.out_start_end_idx[0]:self.out_start_end_idx[1], :]
+            bias = self.original_layer.bias[self.out_start_end_idx[0]:self.out_start_end_idx[1]]
+        elif self.out_start_end_idx is None:
+            weight = self.original_layer.weight[:, self.in_start_end_idx[0]:self.in_start_end_idx[1]]
+            bias = self.original_layer.bias
+        else:
+            weight = self.original_layer.weight[self.out_start_end_idx[0]:self.out_start_end_idx[1], self.in_start_end_idx[0]:self.in_start_end_idx[1]]
+            bias = self.original_layer.bias[self.out_start_end_idx[0]:self.out_start_end_idx[1]]
+
+        if self.batchnorm:
+            x = F.linear(x, weight, bias)
+            x = self.batchnorm(x)
+            return F.relu(x)
+        else:
+            return F.linear(x, weight, bias)
+
 class DANN(nn.Module):
     def __init__(self, n_partition = 4):
         super(DANN, self).__init__()
@@ -78,13 +110,17 @@ class DANN(nn.Module):
                     partition_size = output_size // self.n_partition
 
                     # 서브 레이어 생성 (가중치를 공유함)
-                    sublayer = nn.Linear(input_size, partition_size)
-                    sublayer.weight = nn.Parameter(linear_layer.weight[:, p_i * partition_size:(p_i + 1) * partition_size])
-                    if linear_layer.bias is not None:
-                        sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_size:(p_i + 1) * partition_size]) # 바이어스는 그대로 공유
+                    # sublayer = PartitionedLinear(linear_layer, p_i * output_size, (p_i + 1) * output_size)
+
+                    sublayer = PartitionedLinear(linear_layer, None, [p_i * partition_size, (p_i + 1) * partition_size], True)
+
+                    # sublayer = nn.Linear(input_size, partition_size)
+                    # sublayer.weight = nn.Parameter(linear_layer.weight[:, p_i * partition_size:(p_i + 1) * partition_size])
+                    # if linear_layer.bias is not None:
+                    #     sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_size:(p_i + 1) * partition_size]) # 바이어스는 그대로 공유
 
                     partitioned_layer.append(sublayer)
-                    partitioned_layer.append(nn.BatchNorm1d(partition_size))
+                    # partitioned_layer.append(nn.BatchNorm1d(partition_size))
                     partitioned_layer.append(nn.ReLU(inplace=True))
 
                 elif i == len(linear_layers) - 1:  # 마지막 레이어
@@ -93,10 +129,12 @@ class DANN(nn.Module):
                     partition_size = input_size // self.n_partition
 
                     # 서브 레이어 생성 (가중치를 공유함)
-                    sublayer = nn.Linear(partition_size, output_size)
-                    sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_size:(p_i + 1) * partition_size, :])
-                    if linear_layer.bias is not None:
-                        sublayer.bias = nn.Parameter(linear_layer.bias)  # 바이어스는 그대로 공유
+                    sublayer = PartitionedLinear(linear_layer, [p_i * partition_size, (p_i + 1) * partition_size], None)
+
+                    # sublayer = nn.Linear(partition_size, output_size)
+                    # sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_size:(p_i + 1) * partition_size, :])
+                    # if linear_layer.bias is not None:
+                    #     sublayer.bias = nn.Parameter(linear_layer.bias)  # 바이어스는 그대로 공유
 
                     partitioned_layer.append(sublayer)
 
@@ -107,14 +145,17 @@ class DANN(nn.Module):
                     partition_out_size = output_size // self.n_partition
 
                     # 서브 레이어 생성 (가중치를 공유함)
-                    sublayer = nn.Linear(partition_in_size, partition_out_size)
-                    sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_out_size:(p_i + 1) * partition_out_size,
-                                                                      p_i * partition_in_size:(p_i + 1) * partition_in_size])
-                    if linear_layer.bias is not None:
-                        sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_out_size:(p_i + 1) * partition_out_size])  # 바이어스는 그대로 공유
+                    sublayer = PartitionedLinear(linear_layer, [p_i * partition_in_size, (p_i + 1) * partition_in_size],
+                                                 [p_i * partition_out_size, (p_i + 1) * partition_out_size], True)
+
+                    # sublayer = nn.Linear(partition_in_size, partition_out_size)
+                    # sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_out_size:(p_i + 1) * partition_out_size,
+                    #                                                   p_i * partition_in_size:(p_i + 1) * partition_in_size])
+                    # if linear_layer.bias is not None:
+                    #     sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_out_size:(p_i + 1) * partition_out_size])  # 바이어스는 그대로 공유
 
                     partitioned_layer.append(sublayer)
-                    partitioned_layer.append(nn.BatchNorm1d(partition_out_size))
+                    # partitioned_layer.append(nn.BatchNorm1d(partition_out_size))
                     partitioned_layer.append(nn.ReLU(inplace=True))
 
             self.partitioned_classifier.append(partitioned_layer)
