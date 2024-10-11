@@ -13,39 +13,6 @@ from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-class PartitionedLinear(nn.Module):
-    def __init__(self, original_layer, in_start_end_idx, out_start_end_idx, batchnorm=False):
-        super(PartitionedLinear, self).__init__()
-        self.original_layer = original_layer
-        self.in_start_end_idx = in_start_end_idx
-        self.out_start_end_idx = out_start_end_idx
-        self.batchnorm = batchnorm
-        if self.batchnorm:
-            if self.out_start_end_idx is None:
-                self.batchnorm = nn.BatchNorm1d(original_layer.out_features)
-            else:
-                self.batchnorm = nn.BatchNorm1d(self.out_start_end_idx[1] - self.out_start_end_idx[0])
-
-
-    def forward(self, x):
-        if self.in_start_end_idx is None:
-            weight = self.original_layer.weight[self.out_start_end_idx[0]:self.out_start_end_idx[1], :]
-            bias = self.original_layer.bias[self.out_start_end_idx[0]:self.out_start_end_idx[1]]
-        elif self.out_start_end_idx is None:
-            weight = self.original_layer.weight[:, self.in_start_end_idx[0]:self.in_start_end_idx[1]]
-            bias = self.original_layer.bias
-        else:
-            weight = self.original_layer.weight[self.out_start_end_idx[0]:self.out_start_end_idx[1], self.in_start_end_idx[0]:self.in_start_end_idx[1]]
-            bias = self.original_layer.bias[self.out_start_end_idx[0]:self.out_start_end_idx[1]]
-
-        if self.batchnorm:
-            x = F.linear(x, weight, bias)
-            x = self.batchnorm(x)
-            return F.relu(x)
-        else:
-            return F.linear(x, weight, bias)
-
 class DANN(nn.Module):
     def __init__(self, n_partition = 4):
         super(DANN, self).__init__()
@@ -88,6 +55,7 @@ class DANN(nn.Module):
 
 
         self.create_partitioned_classifier()
+        self.sync_classifier_with_subnetworks()
         print('')
 
     # Method to partition the classifier into sub-networks
@@ -110,17 +78,10 @@ class DANN(nn.Module):
                     partition_size = output_size // self.n_partition
 
                     # 서브 레이어 생성 (가중치를 공유함)
-                    # sublayer = PartitionedLinear(linear_layer, p_i * output_size, (p_i + 1) * output_size)
-
-                    sublayer = PartitionedLinear(linear_layer, None, [p_i * partition_size, (p_i + 1) * partition_size], True)
-
-                    # sublayer = nn.Linear(input_size, partition_size)
-                    # sublayer.weight = nn.Parameter(linear_layer.weight[:, p_i * partition_size:(p_i + 1) * partition_size])
-                    # if linear_layer.bias is not None:
-                    #     sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_size:(p_i + 1) * partition_size]) # 바이어스는 그대로 공유
+                    sublayer = nn.Linear(input_size, partition_size)
 
                     partitioned_layer.append(sublayer)
-                    # partitioned_layer.append(nn.BatchNorm1d(partition_size))
+                    partitioned_layer.append(nn.BatchNorm1d(partition_size))
                     partitioned_layer.append(nn.ReLU(inplace=True))
 
                 elif i == len(linear_layers) - 1:  # 마지막 레이어
@@ -129,12 +90,7 @@ class DANN(nn.Module):
                     partition_size = input_size // self.n_partition
 
                     # 서브 레이어 생성 (가중치를 공유함)
-                    sublayer = PartitionedLinear(linear_layer, [p_i * partition_size, (p_i + 1) * partition_size], None)
-
-                    # sublayer = nn.Linear(partition_size, output_size)
-                    # sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_size:(p_i + 1) * partition_size, :])
-                    # if linear_layer.bias is not None:
-                    #     sublayer.bias = nn.Parameter(linear_layer.bias)  # 바이어스는 그대로 공유
+                    sublayer = nn.Linear(partition_size, output_size)
 
                     partitioned_layer.append(sublayer)
 
@@ -145,20 +101,45 @@ class DANN(nn.Module):
                     partition_out_size = output_size // self.n_partition
 
                     # 서브 레이어 생성 (가중치를 공유함)
-                    sublayer = PartitionedLinear(linear_layer, [p_i * partition_in_size, (p_i + 1) * partition_in_size],
-                                                 [p_i * partition_out_size, (p_i + 1) * partition_out_size], True)
-
-                    # sublayer = nn.Linear(partition_in_size, partition_out_size)
-                    # sublayer.weight = nn.Parameter(linear_layer.weight[p_i * partition_out_size:(p_i + 1) * partition_out_size,
-                    #                                                   p_i * partition_in_size:(p_i + 1) * partition_in_size])
-                    # if linear_layer.bias is not None:
-                    #     sublayer.bias = nn.Parameter(linear_layer.bias[p_i * partition_out_size:(p_i + 1) * partition_out_size])  # 바이어스는 그대로 공유
+                    sublayer = nn.Linear(partition_in_size, partition_out_size)
 
                     partitioned_layer.append(sublayer)
-                    # partitioned_layer.append(nn.BatchNorm1d(partition_out_size))
+                    partitioned_layer.append(nn.BatchNorm1d(partition_out_size))
                     partitioned_layer.append(nn.ReLU(inplace=True))
 
             self.partitioned_classifier.append(partitioned_layer)
+    def sync_classifier_with_subnetworks(self):
+        """
+        Syncs the main classifier weights with those from the partitioned subnetworks.
+        Combines the weights from each subnetwork and updates the main classifier.
+        """
+        linear_layers = [layer for layer in self.classifier if isinstance(layer, nn.Linear)]
+        linear_layers_subnet = [[layer for layer in partitioned_classifier if isinstance(layer, nn.Linear)] for partitioned_classifier in self.partitioned_classifier]
+
+        for i, linear_layer in enumerate(linear_layers):
+            # 각 레이어에 대해 서브네트워크의 가중치를 결합하여 업데이트
+            if i == 0:  # 첫 번째 레이어
+                weight_list = [subnet[i].weight.data for subnet in linear_layers_subnet]
+                linear_layer.weight.data = torch.cat(weight_list, dim=1)
+                if linear_layer.bias is not None:
+                    bias_list = [subnet[i].bias.data for subnet in linear_layers_subnet]
+                    linear_layer.bias.data = torch.cat(bias_list, dim=0)
+
+            elif i == len(linear_layers) - 1:  # 마지막 레이어
+                weight_list = [subnet[i].weight.data for subnet in linear_layers_subnet]
+                linear_layer.weight.data = torch.cat(weight_list, dim=0)
+
+                if linear_layer.bias is not None:
+                    bias_list = [subnet[i].bias.data for subnet in linear_layers_subnet]
+                    linear_layer.bias.data = torch.cat(bias_list, dim=0)
+
+            else:  # 중간 레이어
+                weight_list = [subnet[i].weight.data for subnet in linear_layers_subnet]
+                linear_layer.weight.data = torch.cat(weight_list, dim=1)
+
+                if linear_layer.bias is not None:
+                    bias_list = [subnet[i].bias.data for subnet in linear_layers_subnet]
+                    linear_layer.bias.data = torch.cat(bias_list, dim=0)
 
     def forward(self, input_data, alpha=1.0):
         input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
