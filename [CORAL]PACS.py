@@ -11,16 +11,16 @@ from dataloader.pacs_loader import pacs_loader
 from model.AlexNetCaffe import AlexNetCaffe228
 from model.SimpleCNN import CNN228
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--epoch', type=int, default=1000)
+    parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--model', type=str, default='alex') # cnn/alex
-    parser.add_argument('--coral_mode', type=str, default='logit') # feature/logit
+    parser.add_argument('--coral_mode', type=str, default='feature') # feature/logit
     args = parser.parse_args()
 
     num_epochs = args.epoch

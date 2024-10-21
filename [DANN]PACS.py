@@ -12,16 +12,16 @@ from model.AlexNetCaffe import AlexNetCaffe228
 from model.SimpleCNN import CNN228
 from model.Discriminator import Discriminator228
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--pretrain_epoch', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--pretrain_epoch', type=int, default=20)
+    parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--model', type=str, default='alex') # cnn/alex
-    parser.add_argument('--lr_cls', type=float, default=0.1)
+    parser.add_argument('--lr_cls', type=float, default=0.01)
     parser.add_argument('--lr_dom', type=float, default=0.01)
     args = parser.parse_args()
 
@@ -32,13 +32,13 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[DANN]PACS_" + args.model +
+               name="[DANN]PACS_S:Photo" + args.model +
                     "lr(cls):" + str(args.lr_cls) + "_lr(dom)" + str(args.lr_dom)
                     + "_Batch:" + str(args.batch_size)
                )
 
     # Photo, Art_Painting, Cartoon, Sketch
-    source_loader = pacs_loader(split='train', domain='train', batch_size=args.batch_size)
+    source_loader = pacs_loader(split='train', domain='photo', batch_size=args.batch_size)
     photo_train_loader = pacs_loader(split='train', domain='photo', batch_size=args.batch_size)
     art_loader = pacs_loader(split='test', domain='artpaintings', batch_size=args.batch_size)
     cartoon_loader = pacs_loader(split='test', domain='cartoon', batch_size=args.batch_size)
@@ -61,7 +61,7 @@ def main():
         optimizer_cls = optim.SGD(list(model.parameters()), lr=args.lr_cls, momentum=0.9, weight_decay=1e-6)
         optimizer_dom = optim.SGD(list(model.features.parameters()) + list(discriminator.parameters())
                                   , lr=args.lr_dom, momentum=0.9, weight_decay=1e-6)
-    pre_opt = optim.Adam(model.parameters(), lr=1e-5)
+    pre_opt = optim.Adam(model.parameters(), lr=1e-4)
 
     scheduler_cls = optim.lr_scheduler.LambdaLR(optimizer_cls, lr_lambda)
     scheduler_dom = optim.lr_scheduler.LambdaLR(optimizer_dom, lr_lambda)

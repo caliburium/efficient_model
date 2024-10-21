@@ -9,7 +9,7 @@ from dataloader.pacs_loader import pacs_loader
 from model.AlexNetCaffe import AlexNetCaffe228
 from model.SimpleCNN import CNN228
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 
 def main():
@@ -25,11 +25,11 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CNN]PACS_" + args.model + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CNN]PACS_S=Photo_" + args.model + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     # domain 'train' = artpaintings, cartoon, sketch
-    source_loader = pacs_loader(split='train', domain='train', batch_size=args.batch_size)
+    source_loader = pacs_loader(split='train', domain='photo', batch_size=args.batch_size)
     art_loader = pacs_loader(split='test', domain='artpaintings', batch_size=args.batch_size)
     cartoon_loader = pacs_loader(split='test', domain='cartoon', batch_size=args.batch_size)
     sketch_loader = pacs_loader(split='test', domain='sketch', batch_size=args.batch_size)

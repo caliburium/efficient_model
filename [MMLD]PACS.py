@@ -1,178 +1,318 @@
+# sys.path.append('../')
 import torch
-from torch import nn
-from torch.cuda.amp import autocast, GradScaler
-import torch.optim as optim
-import torch.nn.functional as F
-import numpy as np
 import argparse
-import wandb
-from tqdm import tqdm
-import deeplake
+import os
+from clustering.domain_split import domain_split
+import caffenet
+from torch import nn, optim
+from torch.optim.lr_scheduler import StepLR
+import numpy as np
+from copy import deepcopy
+from clustering.domain_split import calc_mean_std
+from torch import nn
+import torch
+from numpy.random import *
+from torchvision.datasets.folder import make_dataset, default_loader
+from torch.optim.lr_scheduler import _LRScheduler
+import torch.nn as nn
+import torch.nn.functional as F
+from data_loader import *
 
-from functions.lr_lambda import lr_lambda
-from dataloader.pacs_loader import pacs_loader
-from model.AlexNetCaffe import AlexNetCaffe228
-from model.Discriminator import Discriminator228
-from clustering.kmeans_torch import KMeansTorch
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+class MaximumSquareLoss(nn.Module):
+    def __init__(self):
+        super(MaximumSquareLoss, self).__init__()
+
+    def forward(self, x):
+        p = F.softmax(x, dim=1)
+        b = (torch.mul(p, p))
+        b = -1.0 * b.sum(dim=1).mean() / 2
+        return b
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--num_classes', type=int, default=7)
-    parser.add_argument('--num_domains', type=int, default=4)
-    parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--lr', type=float, default=0.01)
-    args = parser.parse_args()
+class HLoss(nn.Module):
+    def __init__(self):
+        super(HLoss, self).__init__()
 
-    num_epochs = args.epoch
-    num_classes = args.num_classes
-    num_domains = args.num_domains
+    def forward(self, x):
+        b = F.softmax(x, dim=1) * F.log_softmax(x, dim=1)
+        b = -1.0 * b.sum(dim=1).mean()
+        return b
 
-    # Initialize Weights and Biases
-    wandb.init(project="EM_Domain",
-               entity="hails",
-               config=args.__dict__,
-               name="MMLD_PACS_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
-               )
 
-    pacs_train = deeplake.load("hub://activeloop/pacs-train")
-    pacs_test = deeplake.load("hub://activeloop/pacs-test")
+class inv_lr_scheduler(_LRScheduler):
+    def __init__(self, optimizer, alpha, beta, total_epoch, last_epoch=-1):
+        self.alpha = alpha
+        self.beta = beta
+        self.total_epoch = total_epoch
+        super(inv_lr_scheduler, self).__init__(optimizer, last_epoch)
 
-    # Photo, Art_Painting, Cartoon, Sketch
-    photo_loader_train, photo_loader_test = pacs_loader(True, 0, args.batch_size, pacs_train, pacs_test)
-    art_loader_train, art_loader_test = pacs_loader(True, 1, args.batch_size, pacs_train, pacs_test)
-    cartoon_loader_train, cartoon_loader_test = pacs_loader(True, 2, args.batch_size, pacs_train, pacs_test)
-    sketch_loader_train, sketch_loader_test = pacs_loader(True, 3, args.batch_size, pacs_train, pacs_test)
-    train_loader = [photo_loader_train, art_loader_train, cartoon_loader_train, sketch_loader_train]
+    def get_lr(self):
+        return [base_lr * ((1 + self.alpha * self.last_epoch / self.total_epoch) ** (-self.beta)) for base_lr in
+                self.base_lrs]
 
-    print("Data load complete, start training")
 
-    model = AlexNetCaffe(num_classes=num_classes).to(device)
-    kmeans = KMeansTorch(num_clusters=num_domains, device=device)
-    discriminator = Discriminator(num_domains=num_domains).to(device)
-
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+def eval_model(model, eval_data, device, epoch, filename):
     criterion = nn.CrossEntropyLoss()
-    scaler = GradScaler()
-
-    # Meta-learning stage inside main
-    for epoch in range(num_epochs):
-        model.train()
-        meta_gradient = [torch.zeros_like(param) for param in model.parameters()]
-
-        loss_label_epoch = 0
-        loss_domain_epoch = 0
-
-        for domain_idx, data_loader in enumerate(train_loader):
-            domain_gradient = [torch.zeros_like(param) for param in model.parameters()]
-
-            for i, train_data in enumerate(tqdm(data_loader)):
-                p = (float(i + epoch * len(data_loader)) / num_epochs / len(data_loader))
-                lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
-
-                images, labels, _ = train_data
-                images, labels = images.to(device), labels.to(device)
-
-                with autocast():
-                    fcl, label_pred = model(images)
-                    kmeans_pred = kmeans.fit(fcl)
-                    dis_pred = discriminator(fcl, lambda_p)
-
-                    loss_l = criterion(label_pred, labels.squeeze())
-                    loss_d = criterion(dis_pred, kmeans_pred)
-                    loss = loss_l + loss_d
-
-                optimizer.zero_grad()
-                scaler.scale(loss).backward()
-
-                # Collect gradients for meta-update
-                for j, param in enumerate(model.parameters()):
-                    domain_gradient[j] += param.grad.data
-
-                loss_label_epoch += loss_l.item()
-                loss_domain_epoch += loss_d.item()
-
-            # Normalize domain gradients and add to meta gradients
-            domain_gradient = [g / len(data_loader) for g in domain_gradient]
-            for j, g in enumerate(meta_gradient):
-                meta_gradient[j] += domain_gradient[j]
-
-        meta_gradient = [torch.zeros_like(param) for param in model.parameters()]
-
-        # Meta-update using the accumulated gradients
-        optimizer.zero_grad()
-        for j, param in enumerate(model.parameters()):
-            if param.grad is not None:
-                param.grad.data = meta_gradient[j] / len(train_loader)
-
-        scaler.step(optimizer)
-        scheduler.step()
-        scaler.update()
-
-        # Log losses to wandb
-        wandb.log({
-            'Label Loss': loss_label_epoch / len(train_loader),
-            'Domain Loss': loss_domain_epoch / len(train_loader),
-            'Total Loss': (loss_label_epoch + loss_domain_epoch) / len(train_loader),
-            'Epoch': epoch + 1
-        })
-
-        print(f'Epoch [{epoch + 1}/{num_epochs}], '
-              f'Label Loss: {loss_label_epoch / len(train_loader):.4f}, '
-              f'Domain Loss: {loss_domain_epoch / len(train_loader):.4f}, '
-              f'Total Loss: {(loss_label_epoch + loss_domain_epoch) / len(train_loader):.4f}')
-
-        model.eval()
-
-        def lc_tester(loader, group):
-            correct, total = 0, 0
-            for image, label, _ in loader:
-                image = image.to(device)
-                label = label.to(device).long()  # Ensure label is LongTensor
-
-                _, class_output = model(image)
-                preds = F.log_softmax(class_output, dim=1)
-
-                _, predicted = torch.max(preds.data, 1)
-                total += label.size(0)
-                correct += (predicted == label).sum().item()
-
-            accuracy = correct / total
-            wandb.log({'[Label] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
-            print('[Label] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
-
-        def dc_tester(loader, group):
-            correct, total = 0, 0
-            for image, _, domain in loader:
-                image = image.to(device)
-                domain = domain.to(device).long()  # Ensure domain is LongTensor
-
-                fcl, _ = model(image)
-                domain_output = discriminator(fcl, lambda_p=1.0)
-                preds = F.log_softmax(domain_output, dim=1)
-
-                _, predicted = torch.max(preds.data, 1)
-                total += domain.size(0)
-                correct += (predicted == domain).sum().item()
-
-            accuracy = correct / total
-            wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
-            print('[Domain] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
-
+    model.eval()  # Set model to training mode
+    running_loss = 0.0
+    running_corrects = 0
+    # Iterate over data.
+    data_num = 0
+    for inputs, labels in eval_data:
         with torch.no_grad():
-            lc_tester(photo_loader_test, 'Photo')
-            lc_tester(art_loader_test, 'Art')
-            lc_tester(cartoon_loader_test, 'Cartoon')
-            lc_tester(sketch_loader_test, 'Sketch')
-            dc_tester(photo_loader_test, 'Photo')
-            dc_tester(art_loader_test, 'Art')
-            dc_tester(cartoon_loader_test, 'Cartoon')
-            dc_tester(sketch_loader_test, 'Sketch')
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            # forward
+            outputs = model(inputs)
+            if isinstance(outputs, tuple):
+                outputs = outputs[0]
+            loss = criterion(outputs, labels)
+            _, preds = torch.max(outputs, 1)
+            # statistics
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels.data).item()
+            data_num += inputs.size(0)
+    epoch_loss = running_loss / len(eval_data.dataset)
+    epoch_acc = running_corrects / len(eval_data.dataset)
+    log = 'Eval: Epoch: {} Loss: {:.4f} Acc: {:.4f}'.format(epoch, epoch_loss, epoch_acc)
+    print(log)
+    with open(filename, 'a') as f:
+        f.write(log + '\n')
+    return epoch_acc
+
+
+def get_disc_dim(name, clustering, domain_num, clustering_num):
+    if name == 'deepall':
+        return None
+    elif name == 'general' and clustering == True:
+        return clustering_num
+    elif name == 'general' and clustering != True:
+        return domain_num
+    else:
+        raise ValueError('Name of train unknown %s' % name)
+
+
+def copy_weights(net_from, net_to):
+    for m_from, m_to in zip(net_from.modules(), net_to.modules()):
+        if isinstance(m_to, nn.Linear) or isinstance(m_to, nn.Conv2d) or isinstance(m_to, nn.BatchNorm2d):
+            m_to.weight.data = m_from.weight.data.clone()
+            if m_to.bias is not None:
+                m_to.bias.data = m_from.bias.data.clone()
+    return net_from, net_to
 
 
 if __name__ == '__main__':
-    main()
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--data-root', default='/home/hail/efficient_model/dg_mmld/data/PACS/kfold/')
+    parser.add_argument('--save-root', default='/home/hail/efficient_model/dg_mmld/ckpt/')
+    parser.add_argument('--result-dir', default='PACS')
+    parser.add_argument('--train', default='general')
+    parser.add_argument('--data', default='PACS')
+    parser.add_argument('--model', default='caffenet')
+    parser.add_argument('--clustering', action='store_true')
+    parser.add_argument('--clustering-method', default='Kmeans')
+    parser.add_argument('--num-clustering', type=int, default=3)
+    parser.add_argument('--clustering-step', type=int, default=1)
+    parser.add_argument('--entropy', choices=['default', 'maximum_square'], default='default')
+    parser.add_argument('--batch-size', type=int, default=64)
+    parser.add_argument('--eval-step', type=int, default=10)
+    parser.add_argument('--save-step', type=int, default=10)
+
+    parser.add_argument('--exp-num', type=int, default=0)
+    parser.add_argument('--gpu', type=int, default=0)
+
+    parser.add_argument('--num-epoch', type=int, default=30)
+    parser.add_argument('--scheduler', default='step')
+    parser.add_argument('--lr', type=float, default=1e-6)
+    parser.add_argument('--lr-step', type=int, default=24)
+    parser.add_argument('--lr-decay-gamma', type=float, default=0.1)
+    parser.add_argument('--nesterov', action='store_true')
+
+    parser.add_argument('--fc-weight', type=float, default=10.0)
+    parser.add_argument('--disc-weight', type=float, default=10.0)
+    parser.add_argument('--entropy-weight', type=float, default=1.0)
+    parser.add_argument('--grl-weight', type=float, default=1.0)
+    parser.add_argument('--loss-disc-weight', action='store_true')
+
+    parser.add_argument('--color-jitter', action='store_true')
+    parser.add_argument('--min-scale', type=float, default=0.8)
+    parser.add_argument('--instance-stat', action='store_true')
+
+    parser.add_argument('--feature-fixed', action='store_true')
+
+    args = parser.parse_args()
+
+    args.momentum = 0.9
+    args.weight_decay = 0.0005
+
+    path = args.save_root + args.result_dir
+    if not os.path.isdir(path):
+        os.makedirs(path)
+        os.makedirs(path + '/models')
+
+    with open(path + '/args.txt', 'w') as f:
+        f.write(str(args))
+
+    domain = get_domain(args.data)
+    source_domain, target_domain = split_domain(domain, args.exp_num)
+
+    device = torch.device("cuda:" + str(args.gpu) if torch.cuda.is_available() else "cpu")
+    get_domain_label, get_cluster = True, False
+
+    source_train, source_val, target_test = random_split_dataloader(
+        data=args.data, data_root=args.data_root, source_domain=source_domain, target_domain=target_domain,
+        batch_size=args.batch_size, get_domain_label=get_domain_label, get_cluster=get_cluster, num_workers=4,
+        color_jitter=args.color_jitter, min_scale=args.min_scale)
+
+    num_epoch = args.num_epoch
+    lr_step = args.lr_step
+
+    # caffenet-specific something
+    disc_dim = len(source_domain)
+    model = caffenet.DGcaffenet(num_classes=source_train.dataset.dataset.num_class, num_domains=disc_dim,
+                                pretrained=True).to(device)
+    model_lr = [(model.base_model.features, 1.0), (model.base_model.classifier, 1.0),
+                (model.base_model.class_classifier, 1.0 * args.fc_weight),
+                (model.discriminator, 1.0 * args.disc_weight)]
+
+    optimizers = [
+        optim.SGD(model.parameters(), lr=args.lr * alpha, momentum=args.momentum, weight_decay=args.weight_decay) for
+        model, alpha in model_lr]
+
+    if args.scheduler == 'inv':
+        schedulers = [inv_lr_scheduler(optimizer=opt, gamma=args.lr_decay_gamma) for opt in optimizers]
+    elif args.scheduler == 'step':
+        schedulers = [StepLR(optimizer=opt, step_size=lr_step, gamma=args.lr_decay_gamma) for opt in optimizers]
+    else:
+        raise ValueError('Name of scheduler unknown %s' % args.scheduler)
+
+    best_acc = 0.0
+    test_acc = 0.0
+    best_epoch = 0
+
+    for epoch in range(num_epoch):
+
+        print('Epoch: {}/{}, Lr: {:.6f}'.format(epoch, num_epoch - 1, optimizers[0].param_groups[0]['lr']))
+        print('Temporary Best Accuracy is {:.4f} ({:.4f} at Epoch {})'.format(test_acc, best_acc, best_epoch))
+
+        dataset = source_train.dataset.dataset
+
+        if args.clustering:
+            if epoch % args.clustering_step == 0:
+                pseudo_domain_label = domain_split(dataset, model, device=device,
+                                                   cluster_before=dataset.clusters,
+                                                   filename=path + '/nmi.txt', epoch=epoch,
+                                                   nmb_cluster=args.num_clustering, method=args.clustering_method,
+                                                   pca_dim=256, whitening=False, L2norm=False,
+                                                   instance_stat=args.instance_stat)
+                dataset.set_cluster(np.array(pseudo_domain_label))
+
+        if args.loss_disc_weight:
+            if args.clustering:
+                hist = dataset.clusters
+            else:
+                hist = dataset.domains
+
+            weight = 1. / np.histogram(hist, bins=model.num_domains)[0]
+            weight = weight / weight.sum() * model.num_domains
+            weight = torch.from_numpy(weight).float().to(device)
+
+        else:
+            weight = None
+
+        # training model
+        class_criterion = nn.CrossEntropyLoss()
+        print(weight)
+        domain_criterion = nn.CrossEntropyLoss(weight=weight)
+        if args.entropy == 'default':
+            entropy_criterion = HLoss()
+        else:
+            entropy_criterion = MaximumSquareLoss()
+
+        p = epoch / num_epoch
+        alpha = (2. / (1. + np.exp(-10 * p)) - 1) * args.grl_weight
+        beta = (2. / (1. + np.exp(-10 * p)) - 1) * args.entropy_weight
+        model.discriminator.set_lambd(alpha)
+        model.train()  # Set model to training mode
+        running_loss_class = 0.0
+        running_correct_class = 0
+        running_loss_domain = 0.0
+        running_correct_domain = 0
+        running_loss_entropy = 0
+        # Iterate over data.
+        for inputs, labels, domains in source_train:
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            domains = domains.to(device)
+            # zero the parameter gradients
+            for optimizer in optimizers:
+                optimizer.zero_grad()
+            # forward
+            output_class, output_domain = model(inputs)
+
+            loss_class = class_criterion(output_class, labels)
+            loss_domain = domain_criterion(output_domain, domains)
+            loss_entropy = entropy_criterion(output_class)
+            _, pred_class = torch.max(output_class, 1)
+            _, pred_domain = torch.max(output_domain, 1)
+
+            total_loss = loss_class + loss_domain + loss_entropy * beta
+            total_loss.backward()
+            for optimizer in optimizers:
+                optimizer.step()
+
+            running_loss_class += loss_class.item() * inputs.size(0)
+            running_correct_class += torch.sum(pred_class == labels.data)
+            running_loss_domain += loss_domain.item() * inputs.size(0)
+            running_correct_domain += torch.sum(pred_domain == domains.data)
+            running_loss_entropy += loss_entropy.item() * inputs.size(0)
+
+            print('Class Loss: {:.4f} Acc: {:.4f}, Domain Loss: {:.4f} Acc: {:.4f}, Entropy Loss: {:.4f}'.format(
+                loss_class.item(), (pred_class == labels.data).float().mean().item(), loss_domain.item(),
+                (pred_domain == domains.data).float().mean().item(), loss_entropy.item()))
+
+        epoch_loss_class = running_loss_class / len(source_train.dataset)
+        epoch_acc_class = running_correct_class.double() / len(source_train.dataset)
+        epoch_loss_domain = running_loss_domain / len(source_train.dataset)
+        epoch_acc_domain = running_correct_domain.double() / len(source_train.dataset)
+        epoch_loss_entropy = running_loss_entropy / len(source_train.dataset)
+
+        log = 'Train: Epoch: {} Alpha: {:.4f} Loss Class: {:.4f} Acc Class: {:.4f}, Loss Domain: {:.4f} Acc Domain: {:.4f} Loss Entropy: {:.4f}'.format(
+            epoch, alpha, epoch_loss_class, epoch_acc_class, epoch_loss_domain, epoch_acc_domain, epoch_loss_entropy)
+        print(log)
+        with open(path + '/source_train.txt', 'a') as f:
+            f.write(log + '\n')
+
+            # evaluation
+        if epoch % args.eval_step == 0:
+            acc = eval_model(model, source_val, device, epoch, path + '/source_eval.txt')
+            acc_ = eval_model(model, target_test, device, epoch, path + '/target_test.txt')
+
+        # save model
+        if epoch % args.save_step == 0:
+            torch.save(model.state_dict(), os.path.join(
+                path, 'models',
+                "model_{}.pt".format(epoch)))
+
+        if acc >= best_acc:
+            best_acc = acc
+            test_acc = acc_
+            best_epoch = epoch
+            torch.save(model.state_dict(), os.path.join(
+                path, 'models',
+                "model_best.pt"))
+
+        for scheduler in schedulers:
+            scheduler.step()
+
+    best_model = caffenet.DGcaffenet(num_classes=source_train.dataset.dataset.num_class, num_domains=disc_dim,
+                                     pretrained=False)
+    best_model.load_state_dict(torch.load(os.path.join(
+        path, 'models',
+        "model_best.pt"), map_location=device))
+    best_model = best_model.to(device)
+    test_acc = eval_model(best_model, target_test, device, best_epoch, path + '/target_best.txt')
+    print('Test Accuracy by the best model on the source domain is {} (at Epoch {})'.format(test_acc, best_epoch))

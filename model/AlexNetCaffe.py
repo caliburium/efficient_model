@@ -84,7 +84,7 @@ class AlexNetCaffe228(nn.Module):
     def forward(self, x):
         # 57.6 is the magic number needed to bring torch data back to the range of caffe data, based on used std
         x = self.features(x * 57.6)
-        features = x.view(x.size(0), -1)
-        x = self.classifier(features)
-        x = self.class_classifier(x)
-        return features, x
+        x = x.view(x.size(0), -1)
+        fcl = self.classifier(x)
+        x = self.class_classifier(fcl)
+        return fcl, x
