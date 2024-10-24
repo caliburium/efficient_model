@@ -30,10 +30,13 @@ class DANN(nn.Module):
             nn.ReLU()
         )
 
-        self.classifier = nn.Sequential(
+        self.pre_classifier = nn.Sequential(
             nn.Linear(128 * 1 * 1, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
+        )
+
+        self.classifier = nn.Sequential(
             nn.Linear(1024, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
@@ -41,9 +44,6 @@ class DANN(nn.Module):
         )
 
         self.discriminator = nn.Sequential(
-            nn.Linear(128 * 1 * 1, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
             nn.Linear(1024, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
@@ -81,7 +81,7 @@ class DANN(nn.Module):
                     sublayer = nn.Linear(input_size, partition_size)
 
                     partitioned_layer.append(sublayer)
-                    partitioned_layer.append(nn.BatchNorm1d(partition_size))
+                    # partitioned_layer.append(nn.BatchNorm1d(partition_size))
                     partitioned_layer.append(nn.ReLU(inplace=True))
 
                 elif i == len(linear_layers) - 1:  # 마지막 레이어
@@ -91,71 +91,72 @@ class DANN(nn.Module):
 
                     # 서브 레이어 생성 (가중치를 공유함)
                     sublayer = nn.Linear(partition_size, output_size)
-
                     partitioned_layer.append(sublayer)
 
-                else:  # 중간 레이어
-                    input_size = linear_layer.in_features
-                    output_size = linear_layer.out_features
-                    partition_in_size = input_size // self.n_partition
-                    partition_out_size = output_size // self.n_partition
-
-                    # 서브 레이어 생성 (가중치를 공유함)
-                    sublayer = nn.Linear(partition_in_size, partition_out_size)
-
-                    partitioned_layer.append(sublayer)
-                    partitioned_layer.append(nn.BatchNorm1d(partition_out_size))
-                    partitioned_layer.append(nn.ReLU(inplace=True))
+                # else:  # 중간 레이어
+                #     input_size = linear_layer.in_features
+                #     output_size = linear_layer.out_features
+                #     partition_in_size = input_size // self.n_partition
+                #     partition_out_size = output_size // self.n_partition
+                #
+                #     # 서브 레이어 생성 (가중치를 공유함)
+                #     sublayer = nn.Linear(partition_in_size, partition_out_size)
+                #
+                #     partitioned_layer.append(sublayer)
+                #     partitioned_layer.append(nn.BatchNorm1d(partition_out_size))
+                #     partitioned_layer.append(nn.ReLU(inplace=True))
 
             self.partitioned_classifier.append(partitioned_layer)
     def sync_classifier_with_subnetworks(self):
-        """
-        Syncs the main classifier weights with those from the partitioned subnetworks.
-        Combines the weights from each subnetwork and updates the main classifier.
-        """
         linear_layers = [layer for layer in self.classifier if isinstance(layer, nn.Linear)]
         linear_layers_subnet = [[layer for layer in partitioned_classifier if isinstance(layer, nn.Linear)] for partitioned_classifier in self.partitioned_classifier]
 
+        # weight_classifier = self.classifier[3].bias[0]
+        # print(weight_classifier)
+
         for i, linear_layer in enumerate(linear_layers):
-            # 각 레이어에 대해 서브네트워크의 가중치를 결합하여 업데이트
-            if i == 0:  # 첫 번째 레이어
-                weight_list = [subnet[i].weight.data for subnet in linear_layers_subnet]
-                linear_layer.weight.data = torch.cat(weight_list, dim=1)
-                if linear_layer.bias is not None:
-                    bias_list = [subnet[i].bias.data for subnet in linear_layers_subnet]
-                    linear_layer.bias.data = torch.cat(bias_list, dim=0)
+            # get layers weight and bias
+            w_ = linear_layer.weight
+            b_ = linear_layer.bias
 
-            elif i == len(linear_layers) - 1:  # 마지막 레이어
-                weight_list = [subnet[i].weight.data for subnet in linear_layers_subnet]
-                linear_layer.weight.data = torch.cat(weight_list, dim=0)
+            ws_ = []
+            bs_ = []
+            for j, subnet_layer in enumerate(linear_layers_subnet):
+                if i == 1:
+                    with torch.no_grad():
+                        subnet_layer[i].bias.copy_(b_)
+                ws_.append(subnet_layer[i].weight)
+                bs_.append(subnet_layer[i].bias)
 
-                if linear_layer.bias is not None:
-                    bias_list = [subnet[i].bias.data for subnet in linear_layers_subnet]
-                    linear_layer.bias.data = torch.cat(bias_list, dim=0)
+            if i == 0:
+                ws_ = torch.cat(ws_, dim = 0)
+                bs_ = torch.cat(bs_, dim = 0)
+            elif i == 1:
+                ws_ = torch.cat(ws_, dim = 1)
+                bs_ = b_
 
-            else:  # 중간 레이어
-                weight_list = [subnet[i].weight.data for subnet in linear_layers_subnet]
-                linear_layer.weight.data = torch.cat(weight_list, dim=1)
 
-                if linear_layer.bias is not None:
-                    bias_list = [subnet[i].bias.data for subnet in linear_layers_subnet]
-                    linear_layer.bias.data = torch.cat(bias_list, dim=0)
+
+            with torch.no_grad():
+                linear_layer.weight.copy_(ws_)
+                linear_layer.bias.copy_(bs_)
+
+        weight_classifier = self.classifier[3].bias[0]
+        # print(weight_classifier)
+        # print('')
 
     def forward(self, input_data, alpha=1.0):
         input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
         feature = self.feature(input_data)
         feature = feature.view(-1, 128 * 1 * 1)
+        feature = self.pre_classifier(feature)
         reverse_feature = ReverseLayerF.apply(feature, alpha)
         domain_penul = self.discriminator(reverse_feature)
         domain_output = self.discriminator_fc(domain_penul)
 
         # pass copied/detached domain_penul through partition_switcher
         partition_switcher_output = self.partition_switcher(domain_penul.clone().detach())
-
-        # softmax over partition_switcher_output
         partition_switcher_output = F.softmax(partition_switcher_output, dim=1)
-
-        # dirichlet distribution over partition_switcher_output
         partition_switcher_output = torch.distributions.dirichlet.Dirichlet(partition_switcher_output).sample()
 
         # sample idx from partition_switcher_output
@@ -171,11 +172,11 @@ class DANN(nn.Module):
             class_output.append(xx)
 
             # class_output.append(self.partitioned_classifier[partition_idx[b_i]](feature[b_i].unsqueeze(0)))
-
-
+        self.sync_classifier_with_subnetworks()
+        class_output_partitioned = torch.cat(class_output, dim=0)
         class_output = self.classifier(feature)
 
-        return class_output, domain_output
+        return class_output_partitioned, class_output, domain_output
 
 
 def main():
@@ -234,12 +235,12 @@ def main():
             source2_images, source2_labels = source2_images.to(device), source2_labels.to(device)
             target_images,  target_lables  = target_images.to(device),  target_lables.to(device)
 
-            class1_output, _ = model(source1_images, alpha=lambda_p)
-            source1_loss = criterion(class1_output, source1_labels)
-            class2_output, _ = model(source2_images, alpha=lambda_p)
-            source2_loss = criterion(class2_output, source2_labels)
-            target_output, _ = model(target_images, alpha=lambda_p)
-            target_loss = criterion(target_output, target_lables)
+            class1_output_partitioned, class1_output, _ = model(source1_images, alpha=lambda_p)
+            source1_loss = criterion(class1_output_partitioned, source1_labels)
+            class2_output_partitioned, class2_output, _ = model(source2_images, alpha=lambda_p)
+            source2_loss = criterion(class2_output_partitioned, source2_labels)
+            target_output_partitioned, target_output, _ = model(target_images, alpha=lambda_p)
+            target_loss = criterion(target_output_partitioned, target_lables)
 
             loss = source1_loss + source2_loss + target_loss
 
@@ -253,9 +254,9 @@ def main():
                   f'Pretrain Accuracy: {label_acc * 100:.3f}%, '
                   )
             """
-            label1_acc = (torch.argmax(class1_output, dim=1) == source1_labels).sum().item() / source1_labels.size(0)
-            label2_acc = (torch.argmax(class2_output, dim=1) == source2_labels).sum().item() / source2_labels.size(0)
-            label3_acc = (torch.argmax(target_output, dim=1) == target_lables).sum().item() / target_lables.size(0)
+            label1_acc = (torch.argmax(class1_output_partitioned, dim=1) == source1_labels).sum().item() / source1_labels.size(0)
+            label2_acc = (torch.argmax(class2_output_partitioned, dim=1) == source2_labels).sum().item() / source2_labels.size(0)
+            label3_acc = (torch.argmax(target_output_partitioned, dim=1) == target_lables).sum().item() / target_lables.size(0)
 
             print(f'Batches [{i + 1}/{min(len(source1_loader), len(source2_loader), len(target_loader))}], '
                     f'Source1 Loss: {source1_loss.item():.4f}, '
