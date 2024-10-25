@@ -300,12 +300,12 @@ def main():
             target_images,  target_labels = target_images.to(device),  target_labels.to(device)
             target_dlabel = torch.full((target_images.size(0),), 1, dtype=torch.long, device=device)
 
-            source1_label_output, source1_domain_output = model(source1_images, alpha=lambda_p)
-            source2_label_output, source2_domain_output = model(source2_images, alpha=lambda_p)
-            target_label_output, target_domain_output = model(target_images, alpha=lambda_p)
-            source1_label_loss = criterion(source1_label_output, source1_labels)
-            source2_label_loss = criterion(source2_label_output, source2_labels)
-            target_label_loss = criterion(target_label_output, target_labels)
+            source1_label_output_partitioned, source1_label_output, source1_domain_output = model(source1_images, alpha=lambda_p)
+            source2_label_output_partitioned, source2_label_output, source2_domain_output = model(source2_images, alpha=lambda_p)
+            target_label_output_partitioned, target_label_output, target_domain_output = model(target_images, alpha=lambda_p)
+            source1_label_loss = criterion(source1_label_output_partitioned, source1_labels)
+            source2_label_loss = criterion(source2_label_output_partitioned, source2_labels)
+            target_label_loss = criterion(target_label_output_partitioned, target_labels)
 
             label_loss = source1_label_loss + source2_label_loss + target_label_loss
             loss_label_epoch += label_loss.item()
@@ -316,7 +316,7 @@ def main():
             domain_src_loss = domain_src1_loss + domain_src2_loss
             loss_src_domain_epoch += domain_src_loss.item()
 
-            _, domain_output = model(target_images, alpha=lambda_p)
+            _, _, domain_output = model(target_images, alpha=lambda_p)
             domain_tgt_loss = criterion(domain_output, target_dlabel)
 
             loss = domain_tgt_loss + domain_src_loss + label_loss
@@ -326,9 +326,9 @@ def main():
             optimizer_cls.step()
             optimizer_dom.step()
 
-            label1_acc = (torch.argmax(source1_label_output, dim=1) == source1_labels).sum().item() / source1_labels.size(0)
-            label2_acc = (torch.argmax(source2_label_output, dim=1) == source2_labels).sum().item() / source2_labels.size(0)
-            label3_acc = (torch.argmax(target_label_output, dim=1) == target_labels).sum().item() / target_labels.size(0)
+            label1_acc = (torch.argmax(source1_label_output_partitioned, dim=1) == source1_labels).sum().item() / source1_labels.size(0)
+            label2_acc = (torch.argmax(source2_label_output_partitioned, dim=1) == source2_labels).sum().item() / source2_labels.size(0)
+            label3_acc = (torch.argmax(target_label_output_partitioned, dim=1) == target_labels).sum().item() / target_labels.size(0)
             domain_source1_acc = (torch.argmax(source1_domain_output, dim=1) == source1_dlabel).sum().item() / source1_dlabel.size(0)
             domain_source2_acc = (torch.argmax(source2_domain_output, dim=1) == source2_dlabel).sum().item() / source2_dlabel.size(0)
             domain_target_acc = (torch.argmax(domain_output, dim=1) == target_dlabel).sum().item() / target_dlabel.size(0)
@@ -386,8 +386,8 @@ def main():
             for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
 
-                class_output, _ = model(images, alpha=0.0)
-                preds = F.log_softmax(class_output, dim=1)
+                class_output_partitioned, class_output, _ = model(images, alpha=0.0)
+                preds = F.log_softmax(class_output_partitioned, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
                 total += labels.size(0)
@@ -402,7 +402,7 @@ def main():
             for images, _ in loader:
                 images = images.to(device)
 
-                _, domain_output = model(images, alpha=0.0)
+                _, _, domain_output = model(images, alpha=0.0)
                 preds = F.log_softmax(domain_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
