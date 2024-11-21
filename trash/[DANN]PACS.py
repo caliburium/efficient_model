@@ -8,7 +8,9 @@ import wandb
 import numpy as np
 from tqdm import tqdm
 from dataloader.pacs_loader import pacs_loader
-from model.AlexNet import DANN_Alex
+from trash.AlexNetCaffe import AlexNetCaffe228
+from model.SimpleCNN import CNN228
+from model.Discriminator import Discriminator224
 
 device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
@@ -16,19 +18,23 @@ device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--pre_epoch', type=int, default=10)
+    parser.add_argument('--pretrain_epoch', type=int, default=20)
     parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--model', type=str, default='alex') # cnn/alex
+    parser.add_argument('--lr_cls', type=float, default=0.01)
+    parser.add_argument('--lr_dom', type=float, default=0.01)
     args = parser.parse_args()
 
+    pre_epochs = args.pretrain_epoch
     num_epochs = args.epoch
 
     # Initialize Weights and Biases
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[DANN]PACS_Alex(PTW=O)_PEpoch:" + str(args.pre_epoch)
-                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[DANN]PACS_S:Photo_" + args.model +
+                    "lr(cls):" + str(args.lr_cls) + "_lr(dom)" + str(args.lr_dom)
+                    + "_Batch:" + str(args.batch_size)
                )
 
     # Photo, Art_Painting, Cartoon, Sketch
@@ -41,23 +47,36 @@ def main():
 
     print("Data load complete, start training")
 
-    model = DANN_Alex(pretrained=True).to(device)
+    discriminator = Discriminator224(num_domains=4).to(device)
+    if args.model == 'cnn':
+        model = CNN228(num_classes=7).to(device)
+        optimizer_cls = optim.SGD(list(model.feature_extractor.parameters())
+                                  + list(model.classifier.parameters()), lr=args.lr_cls, momentum=0.9,
+                                  weight_decay=1e-6)
+        optimizer_dom = optim.SGD(list(model.feature_extractor.parameters())
+                                  + list(discriminator.discriminator.parameters()), lr=args.lr_dom, momentum=0.9,
+                                  weight_decay=1e-6)
+    elif args.model == 'alex':
+        model = AlexNetCaffe228(num_classes=7).to(device)
+        optimizer_cls = optim.SGD(list(model.parameters()), lr=args.lr_cls, momentum=0.9, weight_decay=1e-6)
+        optimizer_dom = optim.SGD(list(model.features.parameters()) + list(discriminator.parameters())
+                                  , lr=args.lr_dom, momentum=0.9, weight_decay=1e-6)
     pre_opt = optim.Adam(model.parameters(), lr=1e-4)
-    optimizer = optim.SGD(list(model.parameters()), lr=args.lr, momentum=0.9, weight_decay=5e-5)
 
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    scheduler_cls = optim.lr_scheduler.LambdaLR(optimizer_cls, lr_lambda)
+    scheduler_dom = optim.lr_scheduler.LambdaLR(optimizer_dom, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(args.pre_epoch):
+    for epoch in range(pre_epochs):
         model.train()
         i = 0
 
-        for source_data in source_loader:
+        for source_data in photo_train_loader:
             # Training with source data
             source_images, source_labels, _ = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
 
-            class_output, _ = model(source_images, 0.0)
+            _, class_output = model(source_images, out='feature')
             loss = criterion(class_output, source_labels)
 
             pre_opt.zero_grad()
@@ -85,7 +104,7 @@ def main():
         loss_src_domain_epoch = 0
         loss_label_epoch = 0
 
-        for source_data, target_data in zip(source_loader, tqdm(photo_train_loader)):
+        for source_data, target_data in zip(photo_train_loader, tqdm(source_loader)):
             p = (float(i + epoch * min(len(source_loader), len(photo_train_loader))) /
                  num_epochs / min(len(source_loader), len(photo_train_loader)))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
@@ -96,10 +115,13 @@ def main():
             target_images, _, target_domain = target_data
             target_images, target_domain = target_images.to(device), target_domain.to(device)
 
-            optimizer.zero_grad()
+            optimizer_cls.zero_grad()
+            optimizer_dom.zero_grad()
 
-            source_class_out, source_domain_out = model(source_images, 0.0)
-            _, target_domain_out = model(target_images, lambda_p)
+            source_feature, source_class_out = model(source_images, out='feature')
+            source_domain_out = discriminator(source_feature, lambda_p=lambda_p)
+            target_feature, _ = model(target_images, out='feature')
+            target_domain_out = discriminator(target_feature, lambda_p=lambda_p)
 
             label_src_loss = criterion(source_class_out, source_labels)
             domain_src_loss = criterion(source_domain_out, source_domain)
@@ -112,11 +134,13 @@ def main():
             loss = label_src_loss + domain_src_loss + domain_tgt_loss
 
             loss.backward()
-            optimizer.step()
+            optimizer_cls.step()
+            optimizer_dom.step()
 
             i += 1
 
-        scheduler.step()
+        scheduler_cls.step()
+        scheduler_dom.step()
 
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Domain source Loss: {loss_src_domain_epoch:.4f}, '
@@ -139,7 +163,7 @@ def main():
             for images, labels, _ in loader:
                 images, labels = images.to(device), labels.to(device)
 
-                class_output, _ = model(images, 0.0)
+                _, class_output = model(images, out='feature')
                 preds = F.log_softmax(class_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
@@ -155,7 +179,8 @@ def main():
             for images, _, domains in loader:
                 images, domains = images.to(device), domains.to(device)
 
-                _, domain_output = model(images, 0.0)
+                features, _ = model(images, out='feature')
+                domain_output = discriminator(features, lambda_p=0.0)
                 preds = F.log_softmax(domain_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)

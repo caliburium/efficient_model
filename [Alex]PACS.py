@@ -6,18 +6,16 @@ import torch.nn.functional as F
 import wandb
 from tqdm import tqdm
 from dataloader.pacs_loader import pacs_loader
-from model.AlexNetCaffe import AlexNetCaffe228
-from model.SimpleCNN import CNN228
+from torchvision.models import alexnet
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--model', type=str, default='alex') # cnn/alex
     args = parser.parse_args()
 
     num_epochs = args.epoch
@@ -25,11 +23,11 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CNN]PACS_S=Photo_" + args.model + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[Alex]PACS_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     # domain 'train' = artpaintings, cartoon, sketch
-    source_loader = pacs_loader(split='train', domain='photo', batch_size=args.batch_size)
+    source_loader = pacs_loader(split='train', domain='train', batch_size=args.batch_size)
     art_loader = pacs_loader(split='test', domain='artpaintings', batch_size=args.batch_size)
     cartoon_loader = pacs_loader(split='test', domain='cartoon', batch_size=args.batch_size)
     sketch_loader = pacs_loader(split='test', domain='sketch', batch_size=args.batch_size)
@@ -37,10 +35,9 @@ def main():
 
     print("Data load complete, start training")
 
-    if args.model == 'cnn':
-        model = CNN228(num_classes=7).to(device)
-    elif args.model == 'alex':
-        model = AlexNetCaffe228(num_classes=7).to(device)
+    model = alexnet(pretrained=True)
+    model.classifier[6] = torch.nn.Linear(in_features=4096, out_features=7)
+    model = model.to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
     criterion = nn.CrossEntropyLoss()
@@ -53,7 +50,7 @@ def main():
         for source_images, source_labels, _ in tqdm(source_loader):
             source_images, source_labels = source_images.to(device), source_labels.to(device)
 
-            _, source_outputs = model(source_images)
+            source_outputs = model(source_images)
             loss = criterion(source_outputs, source_labels)
 
             # Backward and optimize
@@ -77,7 +74,7 @@ def main():
             for images, labels, _ in loader:
                 images, labels = images.to(device), labels.to(device)
 
-                _ , class_output = model(images)
+                class_output = model(images)
                 preds = F.log_softmax(class_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)

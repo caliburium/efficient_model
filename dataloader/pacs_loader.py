@@ -9,6 +9,7 @@ import deeplake
 
 class PACS_Dataset(Dataset):
     VALID_DOMAINS = {
+        'full': [0, 1, 2, 3],
         'train': [0, 1, 2],  # Artpaintings, Cartoon, Sketch
         'artpaintings': 0,
         'cartoon': 1,
@@ -75,7 +76,9 @@ class PACS_Dataset(Dataset):
         return image_paths, label_paths
 
     def _filter_by_domain(self):
-        if self.domain == 'train':
+        if self.domain == 'full':
+            valid_domains = self.VALID_DOMAINS['full']
+        elif self.domain == 'train':
             valid_domains = self.VALID_DOMAINS['train']
         else:
             if isinstance(self.domain, int) and self.domain in self.VALID_DOMAINS.values():
@@ -124,7 +127,7 @@ class PACS_Dataset(Dataset):
 def pacs_loader(split, domain=None, batch_size=128, transform=None):
     if transform is None:
         transform = transforms.Compose([
-            transforms.Resize((228, 228)),
+            transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
