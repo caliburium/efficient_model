@@ -27,7 +27,7 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[DANN]PACS_Alex(PTW=O)_PEpoch:" + str(args.pre_epoch)
+               name="[DANN]PACS_Alex(true)_PEpoch:" + str(args.pre_epoch)
                     + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 

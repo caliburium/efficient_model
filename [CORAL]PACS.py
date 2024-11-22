@@ -1,5 +1,4 @@
 import argparse
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,19 +7,16 @@ import wandb
 from tqdm import tqdm
 from functions.coral_loss import coral_loss
 from dataloader.pacs_loader import pacs_loader
-from trash.AlexNetCaffe import AlexNetCaffe228
-from model.SimpleCNN import CNN228
+from model.AlexNet import AlexNet
 
 device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
+    parser.add_argument('--epoch', type=int, default=200)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--model', type=str, default='alex') # cnn/alex
-    parser.add_argument('--coral_mode', type=str, default='feature') # feature/logit
     args = parser.parse_args()
 
     num_epochs = args.epoch
@@ -28,8 +24,8 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[CORAL]PACS_" + args.model + '_' + args.coral_mode + "_lr:"
-                    + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CORAL]PACS_Alex(True)_logits"
+                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     # train = artpaintings, cartoon, sketch
@@ -42,10 +38,7 @@ def main():
 
     print("Data load complete, start training")
 
-    if args.model == 'cnn':
-        model = CNN228(num_classes=7).to(device)
-    elif args.model == 'alex':
-        model = AlexNetCaffe228(num_classes=7).to(device)
+    model = AlexNet(pretrained=True).to(device)
 
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
     criterion = nn.CrossEntropyLoss()
@@ -63,13 +56,10 @@ def main():
             target_images, _, _ = target_data
             target_images = target_images.to(device)
 
-            source_features, source_outputs = model(source_images)
+            source_outputs = model(source_images)
             classification_loss = criterion(source_outputs, source_labels)
-            target_features, target_outputs = model(target_images)
-            if args.coral_mode == 'feature':
-                coral_loss_value = coral_loss(source_features, target_features)
-            elif args.coral_mode == 'logit':
-                coral_loss_value = coral_loss(source_outputs, target_outputs)
+            target_outputs = model(target_images)
+            coral_loss_value = coral_loss(source_outputs, target_outputs)
             total_loss = classification_loss + coral_loss_value
 
             optimizer.zero_grad()
@@ -97,7 +87,7 @@ def main():
             for images, labels, _ in loader:
                 images, labels = images.to(device), labels.to(device)
 
-                _ , class_output = model(images)
+                class_output = model(images)
                 preds = F.log_softmax(class_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)

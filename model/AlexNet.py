@@ -80,10 +80,11 @@ def DANN_Alex(pretrained=True, progress=True, **kwargs):
 
     return model
 
-class AlexNet(nn.Module):
+
+class AlexNetCaffe(nn.Module):
 
     def __init__(self, num_classes=1000):
-        super(AlexNet, self).__init__()
+        super(AlexNetCaffe, self).__init__()
 
         self.features = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
@@ -113,7 +114,7 @@ class AlexNet(nn.Module):
         )
 
     # DEFINE HOW FORWARD PASS IS COMPUTED
-    def forward(self, x, lambda_p):
+    def forward(self, x):
         x = self.features(x)
         x = self.avgpool(x)
         features = torch.flatten(x, 1)
@@ -122,10 +123,13 @@ class AlexNet(nn.Module):
         return label_out
 
 
-def Alexnet(pretrained=True, progress=True, **kwargs):
-    model = AlexNet(num_classes=1000, **kwargs)
+def AlexNet(pretrained=True, progress=True, **kwargs):
+    model = AlexNetCaffe(num_classes=1000, **kwargs)
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
         model.load_state_dict(state_dict, strict=False)
+
+    # Change output classes
+    model.classifier[6] = nn.Linear(4096, 7)
 
     return model
