@@ -51,7 +51,7 @@ class AlexNetDANN(nn.Module):
 
     # DEFINE HOW FORWARD PASS IS COMPUTED
     def forward(self, x, lambda_p):
-        x = self.features(x)
+        x = self.features(x*57.6)
         x = self.avgpool(x)
         features = torch.flatten(x, 1)
         reversed_feature = ReverseLayerF.apply(features, lambda_p)
@@ -65,6 +65,8 @@ def DANN_Alex(pretrained=True, progress=True, **kwargs):
     model = AlexNetDANN(num_classes=1000, **kwargs)
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
+        del state_dict['classifier.6.weight']
+        del state_dict['classifier.6.bias']
         model.load_state_dict(state_dict, strict=False)
 
     # Change output classes

@@ -60,46 +60,46 @@ class DANN(nn.Module):
 
     # Method to partition the classifier into sub-networks
     def create_partitioned_classifier(self):
-        self.partitioned_classifier = []  # ModuleList·Î ÃÊ±âÈ­
+        self.partitioned_classifier = []  # ModuleList로 초기화
 
         linear_layers = []
         for layer in self.classifier:
             if isinstance(layer, nn.Linear):
                 linear_layers.append(layer)
 
-        # °¢ ÆÄÆ¼¼Ç¿¡ ´ëÇØ ¼­ºê³×Æ®¿öÅ©¸¦ »ý¼ºÇÏ¸é¼­ °¡ÁßÄ¡¸¦ °øÀ¯ÇÏµµ·Ï ¼³Á¤
+        # 각 파티션에 대해 서브네트워크를 생성하면서 가중치를 공유하도록 설정
         for p_i in range(self.n_partition):
             partitioned_layer = nn.ModuleList()
 
             for i, linear_layer in enumerate(linear_layers):
-                if i == 0:  # Ã¹ ¹øÂ° ·¹ÀÌ¾î
+                if i == 0:  # 첫 번째 레이어
                     input_size = linear_layer.in_features
                     output_size = linear_layer.out_features
                     partition_size = output_size // self.n_partition
 
-                    # ¼­ºê ·¹ÀÌ¾î »ý¼º (°¡ÁßÄ¡¸¦ °øÀ¯ÇÔ)
+                    # 서브 레이어 생성 (가중치를 공유함)
                     sublayer = nn.Linear(input_size, partition_size)
 
                     partitioned_layer.append(sublayer)
                     # partitioned_layer.append(nn.BatchNorm1d(partition_size))
                     partitioned_layer.append(nn.ReLU(inplace=True))
 
-                elif i == len(linear_layers) - 1:  # ¸¶Áö¸· ·¹ÀÌ¾î
+                elif i == len(linear_layers) - 1:  # 마지막 레이어
                     input_size = linear_layer.in_features
                     output_size = linear_layer.out_features
                     partition_size = input_size // self.n_partition
 
-                    # ¼­ºê ·¹ÀÌ¾î »ý¼º (°¡ÁßÄ¡¸¦ °øÀ¯ÇÔ)
+                    # 서브 레이어 생성 (가중치를 공유함)
                     sublayer = nn.Linear(partition_size, output_size)
                     partitioned_layer.append(sublayer)
 
-                # else:  # Áß°£ ·¹ÀÌ¾î
+                # else:  # 중간 레이어
                 #     input_size = linear_layer.in_features
                 #     output_size = linear_layer.out_features
                 #     partition_in_size = input_size // self.n_partition
                 #     partition_out_size = output_size // self.n_partition
                 #
-                #     # ¼­ºê ·¹ÀÌ¾î »ý¼º (°¡ÁßÄ¡¸¦ °øÀ¯ÇÔ)
+                #     # 서브 레이어 생성 (가중치를 공유함)
                 #     sublayer = nn.Linear(partition_in_size, partition_out_size)
                 #
                 #     partitioned_layer.append(sublayer)
@@ -162,7 +162,7 @@ class DANN(nn.Module):
         # sample idx from partition_switcher_output
         partition_idx = torch.argmax(partition_switcher_output, dim=1)
 
-        # run the partitioned classifier
+        # run the partitioned classifier # TODO
         class_output = []
 
         for b_i in range(feature.size(0)):

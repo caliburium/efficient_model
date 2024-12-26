@@ -1,18 +1,10 @@
-# sys.path.append('../')
-import torch
 import argparse
 import os
 from clustering.domain_split import domain_split
-import caffenet
 from torch import nn, optim
 from torch.optim.lr_scheduler import StepLR
 import numpy as np
-from copy import deepcopy
-from clustering.domain_split import calc_mean_std
-from torch import nn
 import torch
-from numpy.random import *
-from torchvision.datasets.folder import make_dataset, default_loader
 from torch.optim.lr_scheduler import _LRScheduler
 import torch.nn as nn
 import torch.nn.functional as F
@@ -106,9 +98,6 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--data-root', default='/home/hail/efficient_model/dg_mmld/data/PACS/kfold/')
-    parser.add_argument('--save-root', default='/home/hail/efficient_model/dg_mmld/ckpt/')
-    parser.add_argument('--result-dir', default='PACS')
     parser.add_argument('--train', default='general')
     parser.add_argument('--data', default='PACS')
     parser.add_argument('--model', default='caffenet')
