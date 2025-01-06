@@ -93,6 +93,30 @@ def DANN_Alex(pretrained=True, progress=True, num_class=7, num_domain=4, **kwarg
 
     return model
 
+def DANN_Alex32(pretrained=True, progress=True, num_class=7, num_domain=4, **kwargs):
+    model = AlexNetDANN(num_classes=1000, **kwargs)
+    if pretrained:
+        state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
+        del state_dict['features.0.weight']
+        del state_dict['features.0.bias']
+        del state_dict['classifier.6.weight']
+        del state_dict['classifier.6.bias']
+        model.load_state_dict(state_dict, strict=False)
+
+    # Change output classes
+    model.features[0] = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
+    model.classifier[6] = nn.Linear(4096, num_class)
+    model.discriminator[6] = nn.Linear(4096, num_domain)
+
+    # Copy pretrained weights from the classifier to the discriminator
+    model.discriminator[1].weight.data = model.classifier[1].weight.data.clone()
+    model.discriminator[1].bias.data = model.classifier[1].bias.data.clone()
+
+    model.discriminator[4].weight.data = model.classifier[4].weight.data.clone()
+    model.discriminator[4].bias.data = model.classifier[4].bias.data.clone()
+
+    return model
+
 
 class AlexNetCaffe(nn.Module):
 
@@ -145,6 +169,23 @@ def AlexNet(pretrained=True, progress=True, num_class=7, **kwargs):
         model.load_state_dict(state_dict, strict=False)
 
     # Change output classes
+    model.classifier[6] = nn.Linear(4096, num_class)
+
+    return model
+
+
+def AlexNet32(pretrained=True, progress=True, num_class=7, **kwargs):
+    model = AlexNetCaffe(num_classes=1000, **kwargs)
+    if pretrained:
+        state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
+        del state_dict['features.0.weight']
+        del state_dict['features.0.bias']
+        del state_dict['classifier.6.weight']
+        del state_dict['classifier.6.bias']
+        model.load_state_dict(state_dict, strict=False)
+
+    # Change output classes
+    model.features[0] = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
     model.classifier[6] = nn.Linear(4096, num_class)
 
     return model

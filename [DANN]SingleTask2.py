@@ -3,13 +3,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import numpy as np
+from functions.lr_lambda import *
 import wandb
+import numpy as np
 from tqdm import tqdm
-from functions.lr_lambda import lr_lambda
 from dataloader.data_loader import data_loader
-from model.SimpleCNN import CNN32
-from model.Discriminator import Discriminator32
+from model.AlexNet import DANN_Alex32
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -17,69 +16,61 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--pretrain_epoch', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--source', type=str, default='SVHN')
-    parser.add_argument('--target', type=str, default='MNIST')
-    parser.add_argument('--lr_cls', type=float, default=0.01)
-    parser.add_argument('--lr_dom', type=float, default=0.1)
+    parser.add_argument('--pre_epoch', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=200)
+    parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
 
-    pre_epochs = args.pretrain_epoch
     num_epochs = args.epoch
 
     # Initialize Weights and Biases
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[DANN]_S:" + args.source + "_T:" + args.target
-                    + "_clr:" + str(args.lr_cls) + "_dlr:" + str(args.lr_dom)
-                    + "_Batch:" + str(args.batch_size)
+               name="[DANN]SingleTask_CIFAR10/STL10_PEpoch:" + str(args.pre_epoch)
+                    + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
-    source_loader, source_loader_test = data_loader(args.source, args.batch_size)
-    target_loader, target_loader_test = data_loader(args.target, args.batch_size)
+    # Photo, Art_Painting, Cartoon, Sketch
+    source_loader, source_loader_test = data_loader('CIFAR10', args.batch_size)
+    target_loader, target_loader_test = data_loader('STL10', args.batch_size)
 
     print("Data load complete, start training")
 
-    model = CNN32(num_classes=10).to(device)
-    discriminator = Discriminator32(num_domains=2).to(device)
+    model = DANN_Alex32(pretrained=True, num_class=10, num_domain=2).to(device)
+    pre_opt = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.SGD(list(model.parameters()), lr=args.lr, momentum=0.9, weight_decay=5e-5)
 
-    pre_opt = optim.Adam(model.parameters(), lr=1e-5)
-    optimizer_cls = optim.SGD(list(model.feature_extractor.parameters())
-                              + list(model.classifier.parameters()), lr=args.lr_cls, momentum=0.9, weight_decay=1e-6)
-    optimizer_dom = optim.SGD(list(model.feature_extractor.parameters())
-                              + list(discriminator.discriminator.parameters()), lr=args.lr_dom, momentum=0.9, weight_decay=1e-6)
-    scheduler_cls = optim.lr_scheduler.LambdaLR(optimizer_cls, lr_lambda)
-    scheduler_dom = optim.lr_scheduler.LambdaLR(optimizer_dom, lr_lambda)
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(pre_epochs):
+    for epoch in range(args.pre_epoch):
         model.train()
-        i = 0
+        total_loss = 0
+        total_correct = 0
+        total_samples = 0
 
-        for source_data in source_loader:
-            # Training with source data
-            source_images, source_labels = source_data
+        for source_images, source_labels in source_loader:
             source_images, source_labels = source_images.to(device), source_labels.to(device)
 
-            _, class_output = model(source_images)
+            class_output, _ = model(source_images, 0.0)
             loss = criterion(class_output, source_labels)
 
             pre_opt.zero_grad()
             loss.backward()
             pre_opt.step()
 
-            label_acc = (torch.argmax(class_output, dim=1) == source_labels).sum().item() / source_labels.size(0)
+            total_loss += loss.item()
+            total_correct += (torch.argmax(class_output, dim=1) == source_labels).sum().item()
+            total_samples += source_labels.size(0)
 
-            print(f'Batches [{i + 1}/{len(source_loader)}], '
-                  f'Pretrain Loss: {loss.item():.4f}, '
-                  f'Pretrain Accuracy: {label_acc * 100:.3f}%, '
-                  )
-
-            i += 1
+        epoch_accuracy = total_correct / total_samples
+        print(
+            f'Epoch [{epoch + 1}/{args.pre_epoch}], Pretrain Loss: {total_loss:.4f}, Pretrain Accuracy: {epoch_accuracy * 100:.3f}%')
 
         model.eval()
+
+    print("Pretrain Finished")
 
     for epoch in range(num_epochs):
         model.train()
@@ -94,26 +85,22 @@ def main():
                  num_epochs / min(len(source_loader), len(target_loader)))
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
-
             source_images, source_labels = source_data
             source_images, source_labels = source_images.to(device), source_labels.to(device)
-            source_dlabel = torch.full((source_images.size(0),), 1, dtype=torch.long, device=device)
 
             target_images, _ = target_data
             target_images = target_images.to(device)
-            target_dlabel = torch.full((target_images.size(0),), 0, dtype=torch.long, device=device)
+            source_domain = torch.full((source_images.size(0),), 1, dtype=torch.long).to(device)
+            target_domain = torch.full((target_images.size(0),), 0, dtype=torch.long).to(device)
 
-            optimizer_cls.zero_grad()
-            optimizer_dom.zero_grad()
+            optimizer.zero_grad()
 
-            source_feature, source_class_out = model(source_images)
-            source_domain_out = discriminator(source_feature, lambda_p=lambda_p)
-            target_feature, _ = model(target_images)
-            target_domain_out = discriminator(target_feature, lambda_p=lambda_p)
+            source_class_out, source_domain_out = model(source_images, 0.0)
+            _, target_domain_out = model(target_images, lambda_p)
 
             label_src_loss = criterion(source_class_out, source_labels)
-            domain_src_loss = criterion(source_domain_out, source_dlabel)
-            domain_tgt_loss = criterion(target_domain_out, target_dlabel)
+            domain_src_loss = criterion(source_domain_out, source_domain)
+            domain_tgt_loss = criterion(target_domain_out, target_domain)
 
             loss_label_epoch += label_src_loss.item()
             loss_src_domain_epoch += domain_src_loss.item()
@@ -122,19 +109,17 @@ def main():
             loss = label_src_loss + domain_src_loss + domain_tgt_loss
 
             loss.backward()
-            optimizer_cls.step()
-            optimizer_dom.step()
+            optimizer.step()
 
             i += 1
 
-        scheduler_cls.step()
-        scheduler_dom.step()
+        scheduler.step()
 
         print(f'Epoch [{epoch + 1}/{num_epochs}], '
               f'Domain source Loss: {loss_src_domain_epoch:.4f}, '
               f'Domain target Loss: {loss_tgt_domain_epoch:.4f}, '
               f'Label Loss: {loss_label_epoch:.4f}, '
-              f'Total Loss: {loss_src_domain_epoch + loss_tgt_domain_epoch  + loss_label_epoch:.4f}, '
+              f'Total Loss: {loss_src_domain_epoch + loss_tgt_domain_epoch + loss_label_epoch:.4f}, '
               )
 
         wandb.log({
@@ -151,7 +136,7 @@ def main():
             for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
 
-                _, class_output = model(images)
+                class_output, _ = model(images, 0.0)
                 preds = F.log_softmax(class_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
@@ -162,28 +147,28 @@ def main():
             wandb.log({group + ' Accuracy': accuracy}, step=epoch + 1)
             print(group + f' Accuracy: {accuracy * 100:.3f}%')
 
-        def dc_tester(loader, group, d_label):
+        def dc_tester(loader, group, domain):
             correct, total = 0, 0
+            domains = torch.full((len(loader.dataset),), domain, dtype=torch.long).to(device)
             for images, _ in loader:
                 images = images.to(device)
 
-                features, _ = model(images)
-                domain_output = discriminator(features, lambda_p=0.0)
+                _, domain_output = model(images, 0.0)
                 preds = F.log_softmax(domain_output, dim=1)
 
                 _, predicted = torch.max(preds.data, 1)
                 total += images.size(0)
-                correct += (predicted == d_label).sum().item()
+                correct += (predicted == domains[:images.size(0)]).sum().item()
 
             accuracy = correct / total
             wandb.log({'[Domain] ' + group + ' Accuracy': accuracy}, step=epoch + 1)
             print('[Domain] ' + group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            lc_tester(source_loader_test, 'SVHN')
-            lc_tester(target_loader_test, 'MNIST')
-            dc_tester(source_loader_test, 'SVHN', 1)
-            dc_tester(target_loader_test, 'MNIST', 0)
+            lc_tester(source_loader_test, 'CIFAR10')
+            lc_tester(target_loader_test, 'STL10')
+            dc_tester(source_loader_test, 'CIFAR10', 1)
+            dc_tester(target_loader_test, 'STL10', 0)
 
 
 if __name__ == '__main__':
