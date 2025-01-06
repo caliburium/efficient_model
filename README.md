@@ -1,5 +1,5 @@
  - Imagenette requires Pytorch 2.2.1 or later
- - 
+ - deeplake < 4.0
 
 | Target Domain \ Target Class |     Supervised     | Unsupervised |
 |:----------------------------:|:------------------:|:------------:|

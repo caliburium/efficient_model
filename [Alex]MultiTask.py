@@ -5,7 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import wandb
 from tqdm import tqdm
-from dataloader.pacs_loader import pacs_loader
+from dataloader.data_loader import data_loader
 from torchvision.models import alexnet
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,20 +23,18 @@ def main():
     wandb.init(project="Efficient Model - MetaLearning & Domain Adaptation",
                entity="hails",
                config=args.__dict__,
-               name="[Alex]PACS_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[Alex]MultiTask_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     # domain 'train' = artpaintings, cartoon, sketch
-    source_loader = pacs_loader(split='train', domain='train', batch_size=args.batch_size)
-    art_loader = pacs_loader(split='test', domain='artpaintings', batch_size=args.batch_size)
-    cartoon_loader = pacs_loader(split='test', domain='cartoon', batch_size=args.batch_size)
-    sketch_loader = pacs_loader(split='test', domain='sketch', batch_size=args.batch_size)
-    target_loader = pacs_loader(split='test', domain='photo', batch_size=args.batch_size)
+    SVHN_loader, SVHN_loader_test = data_loader('SVHN', args.batch_size)
+    CIFAR10_loader, CIFAR10_loader_test = data_loader('CIFAR10', args.batch_size)
+    _, MNIST_loader_test = data_loader('MNIST', args.batch_size)
+    _, STL10_loader_test = data_loader('STL10', args.batch_size)
 
     print("Data load complete, start training")
 
-    model = alexnet(pretrained=True)
-    model.classifier[6] = torch.nn.Linear(in_features=4096, out_features=7)
+    model = alexnet(pretrained=True, num_class=10)
     model = model.to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-6)
@@ -45,33 +43,45 @@ def main():
     for epoch in range(num_epochs):
         model.train()
         i = 0
-        loss_total = 0
+        total_svhn_loss = 0
+        total_cifar10_loss = 0
+        total_loss = 0
 
-        for source_images, source_labels, _ in tqdm(source_loader):
-            source_images, source_labels = source_images.to(device), source_labels.to(device)
+        for svhn_data, cifar10_data in zip(SVHN_loader, tqdm(CIFAR10_loader)):
+            svhn_images, svhn_labels = svhn_data
+            cifar10_images, cifar10_labels = cifar10_data
 
-            source_outputs = model(source_images)
-            loss = criterion(source_outputs, source_labels)
+            svhn_outputs = model(svhn_images)
+            cifar10_outputs = model(cifar10_images)
+            svhn_loss = criterion(svhn_outputs, svhn_labels)
+            cifar10_loss = criterion(cifar10_outputs, cifar10_labels)
+            loss = svhn_loss + cifar10_loss
 
             # Backward and optimize
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            loss_total += loss.item()
+            total_svhn_loss += svhn_loss.item()
+            total_cifar10_loss += cifar10_loss.item()
+            total_loss += loss.item()
 
             i += 1
 
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Total Loss: {loss_total:.4f}')
+        print(
+            f'Epoch [{epoch + 1}/{num_epochs}], Total Loss: {total_loss:.4f}, SVHN Loss: {total_svhn_loss:.4f}, CIFAR-10 Loss: {total_cifar10_loss:.4f}')
+
         wandb.log({
-            'Total Loss': loss_total,
+            'Total Loss': total_loss,
+            'SVHN Loss': total_svhn_loss,
+            'CIFAR-10 Loss': total_cifar10_loss,
         })
 
         model.eval()
 
         def tester(loader, group):
             correct, total = 0, 0
-            for images, labels, _ in loader:
+            for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
 
                 class_output = model(images)
@@ -86,10 +96,10 @@ def main():
             print(group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            tester(art_loader, 'Art Paintings')
-            tester(cartoon_loader, 'Cartoon')
-            tester(sketch_loader, 'Sketch')
-            tester(target_loader, 'Photo')
+            tester(SVHN_loader_test, 'SVHN')
+            tester(CIFAR10_loader_test, 'CIFAR10')
+            tester(MNIST_loader_test, 'MNIST')
+            tester(STL10_loader_test, 'STL10')
 
 if __name__ == '__main__':
     main()

@@ -60,8 +60,19 @@ class AlexNetDANN(nn.Module):
 
         return label_out, domain_out
 
+    def conv_features(self, x):
+        results = []
+        for i, layer in enumerate(self.features):
+            if i == 0:
+                x = layer(x * 57.6)
+            else:
+                x = layer(x)
+            if i in {5, 9}:
+                results.append(x)
+        return results
 
-def DANN_Alex(pretrained=True, progress=True, **kwargs):
+
+def DANN_Alex(pretrained=True, progress=True, num_class=7, num_domain=4, **kwargs):
     model = AlexNetDANN(num_classes=1000, **kwargs)
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
@@ -70,8 +81,8 @@ def DANN_Alex(pretrained=True, progress=True, **kwargs):
         model.load_state_dict(state_dict, strict=False)
 
     # Change output classes
-    model.classifier[6] = nn.Linear(4096, 7)
-    model.discriminator[6] = nn.Linear(4096, 4)
+    model.classifier[6] = nn.Linear(4096, num_class)
+    model.discriminator[6] = nn.Linear(4096, num_domain)
 
     # Copy pretrained weights from the classifier to the discriminator
     model.discriminator[1].weight.data = model.classifier[1].weight.data.clone()
@@ -125,13 +136,15 @@ class AlexNetCaffe(nn.Module):
         return label_out
 
 
-def AlexNet(pretrained=True, progress=True, **kwargs):
+def AlexNet(pretrained=True, progress=True, num_class=7, **kwargs):
     model = AlexNetCaffe(num_classes=1000, **kwargs)
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
+        del state_dict['classifier.6.weight']
+        del state_dict['classifier.6.bias']
         model.load_state_dict(state_dict, strict=False)
 
     # Change output classes
-    model.classifier[6] = nn.Linear(4096, 7)
+    model.classifier[6] = nn.Linear(4096, num_class)
 
     return model

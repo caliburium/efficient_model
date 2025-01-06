@@ -1,7 +1,7 @@
 import deeplake
 import matplotlib.pyplot as plt
 
-ds = deeplake.load("hub://activeloop/pacs-test")
+ds = deeplake.open("hub://activeloop/pacs-test")
 
 print(ds)
 
