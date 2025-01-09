@@ -72,8 +72,8 @@ class AlexNetDANN(nn.Module):
         return results
 
 
-def DANN_Alex(pretrained=True, progress=True, num_class=7, num_domain=4, **kwargs):
-    model = AlexNetDANN(num_classes=1000, **kwargs)
+def DANN_Alex(pretrained=True, progress=True, num_class=7, num_domain=4):
+    model = AlexNetDANN()
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
         del state_dict['classifier.6.weight']
@@ -93,8 +93,9 @@ def DANN_Alex(pretrained=True, progress=True, num_class=7, num_domain=4, **kwarg
 
     return model
 
-def DANN_Alex32(pretrained=True, progress=True, num_class=7, num_domain=4, **kwargs):
-    model = AlexNetDANN(num_classes=1000, **kwargs)
+def DANN_Alex32(pretrained=True, progress=True, num_class=7, num_domain=4):
+    model = AlexNetDANN()
+
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
         del state_dict['features.0.weight']
@@ -160,8 +161,8 @@ class AlexNetCaffe(nn.Module):
         return label_out
 
 
-def AlexNet(pretrained=True, progress=True, num_class=7, **kwargs):
-    model = AlexNetCaffe(num_classes=1000, **kwargs)
+def AlexNet(pretrained=True, progress=True, num_class=7):
+    model = AlexNetCaffe()
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
         del state_dict['classifier.6.weight']
@@ -174,8 +175,8 @@ def AlexNet(pretrained=True, progress=True, num_class=7, **kwargs):
     return model
 
 
-def AlexNet32(pretrained=True, progress=True, num_class=7, **kwargs):
-    model = AlexNetCaffe(num_classes=1000, **kwargs)
+def AlexNet32(pretrained=True, progress=True, num_class=7):
+    model = AlexNetCaffe()
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['alexnet'], progress=progress)
         del state_dict['features.0.weight']
@@ -189,3 +190,12 @@ def AlexNet32(pretrained=True, progress=True, num_class=7, **kwargs):
     model.classifier[6] = nn.Linear(4096, num_class)
 
     return model
+
+def get_model_parts_with_weights(model, fc_weight=1.0, disc_weight=1.0):
+
+    return [
+        {'params': model.features.parameters(), 'lr': 1.0},
+        {'params': model.classifier.parameters(), 'lr': 1.0},
+        {'params': model.classifier[6].parameters(), 'lr': 1.0 * fc_weight},
+        {'params': model.discriminator.parameters(), 'lr': 1.0 * disc_weight},
+    ]

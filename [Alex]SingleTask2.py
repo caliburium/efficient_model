@@ -27,8 +27,8 @@ def main():
                )
 
     # domain 'train' = artpaintings, cartoon, sketch
-    CIFAR10_loader, CIFAR10_loader_test = data_loader('CIFAR10', args.batch_size)
-    _, STL10_loader_test = data_loader('STL10', args.batch_size)
+    source_loader, source_loader_test = data_loader('CIFAR10', args.batch_size)
+    target_loader, target_loader_test = data_loader('STL10', args.batch_size)
 
     print("Data load complete, start training")
 
@@ -43,11 +43,11 @@ def main():
         i = 0
         total_loss = 0
 
-        for cifar10_images, cifar10_labels in tqdm(CIFAR10_loader):
-            cifar10_images, cifar10_labels = cifar10_images.to(device), cifar10_labels.to(device)
+        for source_images, source_labels in tqdm(source_loader):
+            source_images, source_labels = source_images.to(device), source_labels.to(device)
 
-            cifar10_outputs = model(cifar10_images)
-            loss = criterion(cifar10_outputs, cifar10_labels)
+            cifar10_outputs = model(source_images)
+            loss = criterion(cifar10_outputs, source_labels)
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -59,10 +59,10 @@ def main():
             i += 1
 
         print(
-            f'Epoch [{epoch + 1}/{num_epochs}], CIFAR-10 Loss: {total_loss:.4f}')
+            f'Epoch [{epoch + 1}/{num_epochs}], STL10 Loss: {total_loss:.4f}')
 
         wandb.log({
-            'CIFAR10 Loss': total_loss,
+            'STL10 Loss': total_loss,
         })
 
         model.eval()
@@ -84,8 +84,8 @@ def main():
             print(group + f' Accuracy: {accuracy * 100:.3f}%')
 
         with torch.no_grad():
-            tester(CIFAR10_loader_test, 'CIFAR10')
-            tester(STL10_loader_test, 'STL10')
+            tester(source_loader_test, 'CIFAR10')
+            tester(target_loader_test, 'STL10')
 
 if __name__ == '__main__':
     main()

@@ -16,7 +16,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--pre_epoch', type=int, default=10)
+    parser.add_argument('--pre_epoch', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
     args = parser.parse_args()
@@ -38,7 +38,7 @@ def main():
     print("Data load complete, start training")
 
     model = DANN_Alex32(pretrained=True, num_class=10, num_domain=2).to(device)
-    pre_opt = optim.Adam(model.parameters(), lr=1e-4)
+    pre_opt = optim.SGD(list(model.parameters()), lr=0.01)
     optimizer = optim.SGD(list(model.parameters()), lr=args.lr, momentum=0.9, weight_decay=5e-5)
 
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)

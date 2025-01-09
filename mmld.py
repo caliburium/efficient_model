@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
     domain = get_domain(args.data)
     source_domain, target_domain = split_domain(domain, args.exp_num)
-    # 씨발 그냥 idx로 target domain 설정하는거임
+    # idx로 target domain 설정하는거임. source = 나머지, target = photo (domain=0)
 
     device = torch.device("cuda:" + str(args.gpu) if torch.cuda.is_available() else "cpu")
     get_domain_label, get_cluster = train_to_get_label(args.train, args.clustering) # general, true
@@ -93,7 +93,6 @@ if __name__ == '__main__':
 
     model = model.to(device)
     model_lr = get_model_lr(args.model, args.train, model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
-    # 어차피 다 1곱해짐 general, true 기준
     optimizers = [get_optimizer(model_part, args.lr * alpha, args.momentum, args.weight_decay,
                                 args.feature_fixed, args.nesterov, per_layer=False) for model_part, alpha in model_lr]
     # feature_fixed false에 per_layer false라서 그냥 SGD들어감
@@ -181,3 +180,62 @@ if __name__ == '__main__':
     best_model = best_model.to(device)
     test_acc = eval_model(best_model, target_test, device, best_epoch, path + '/target_best.txt')
     print('Test Accuracy by the best model on the source domain is {} (at Epoch {})'.format(test_acc, best_epoch))
+
+
+    def get_model_lr(name, train, model, fc_weight=1.0, disc_weight=1.0):
+            return [(model.base_model.features, 1.0), (model.base_model.classifier, 1.0),
+                    (model.base_model.class_classifier, 1.0 * fc_weight), (model.discriminator, 1.0 * disc_weight)]
+
+def compute_instance_stat(dataloader, model, N, device):
+    model.eval()
+    for i, (input_tensor, _, _) in enumerate(dataloader):
+        with torch.no_grad():
+            input_var = input_tensor.to(device)
+            conv_feats = model.conv_features(input_var)
+            for j, feats in enumerate(conv_feats):
+                feat_mean, feat_std = calc_mean_std(feats)
+                if j == 0:
+                    aux = torch.cat((feat_mean, feat_std), 1).data.cpu().numpy()
+                else:
+                    aux = np.concatenate((aux, torch.cat((feat_mean, feat_std), 1).data.cpu().numpy()), axis=1)
+            if i == 0:
+                features = np.zeros((N, aux.shape[1])).astype('float32')
+            if i < len(dataloader) - 1:
+                features[i * dataloader.batch_size: (i + 1) * dataloader.batch_size] = aux.astype('float32')
+            else:
+                # special treatment for final batch
+                features[i * dataloader.batch_size:] = aux.astype('float32')
+    print(features.shape)
+    return features
+
+def domain_split(dataset, model, device, cluster_before, filename, epoch, nmb_cluster=3, method='Kmeans', pca_dim=256,
+                 batchsize=128, num_workers=4, whitening=False, L2norm=False, instance_stat=True):
+    cluster_method = clustering.__dict__[method](nmb_cluster, pca_dim, whitening, L2norm)
+
+    dataset.set_transform('val')
+    dataloader = DataLoader(dataset, batch_size=batchsize, shuffle=False, num_workers=num_workers)
+
+
+    features = compute_instance_stat(dataloader, model, len(dataset), device)
+
+    clustering_loss = cluster_method.cluster(features, verbose=False)
+    cluster_list = arrange_clustering(cluster_method.images_lists)
+
+    class_nmi = normalized_mutual_info_score(
+        cluster_list, dataloader.dataset.labels, average_method='geometric')
+    domain_nmi = normalized_mutual_info_score(
+        cluster_list, dataloader.dataset.domains, average_method='geometric')
+    before_nmi = normalized_mutual_info_score(
+        cluster_list, cluster_before, average_method='arithmetic')
+
+    log = 'Epoch: {}, NMI against class labels: {:.3f}, domain labels: {:.3f}, previous assignment: {:.3f}'.format(
+        epoch, class_nmi, domain_nmi, before_nmi)
+    print(log)
+    if filename:
+        with open(filename, 'a') as f:
+            f.write(log + '\n')
+
+    mapping = reassign(cluster_before, cluster_list)
+    cluster_reassign = [cluster_method.images_lists[mapp] for mapp in mapping]
+    dataset.set_transform(dataset.split)
+    return arrange_clustering(cluster_reassign)

@@ -26,7 +26,6 @@ def main():
                name="[Alex]MultiTask_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
-    # domain 'train' = artpaintings, cartoon, sketch
     SVHN_loader, SVHN_loader_test = data_loader('SVHN', args.batch_size)
     CIFAR10_loader, CIFAR10_loader_test = data_loader('CIFAR10', args.batch_size)
     _, MNIST_loader_test = data_loader('MNIST', args.batch_size)

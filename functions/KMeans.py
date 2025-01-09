@@ -25,6 +25,7 @@ class KMeans:
 
         self.centroids = centroids
         self.labels = labels
+
         return labels
 
     def predict(self, data):
