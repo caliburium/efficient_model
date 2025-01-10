@@ -7,6 +7,7 @@ model_urls = {
     'alexnet': 'https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth',
 }
 
+
 class AlexNetDANN(nn.Module):
 
     def __init__(self, num_classes=1000):
@@ -16,9 +17,11 @@ class AlexNetDANN(nn.Module):
             nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.LocalResponseNorm(5, 1.e-4, 0.75),
             nn.Conv2d(64, 192, kernel_size=5, padding=2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.LocalResponseNorm(5, 1.e-4, 0.75),
             nn.Conv2d(192, 384, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(384, 256, kernel_size=3, padding=1),
@@ -92,6 +95,7 @@ def DANN_Alex(pretrained=True, progress=True, num_class=7, num_domain=4):
     model.discriminator[4].bias.data = model.classifier[4].bias.data.clone()
 
     return model
+
 
 def DANN_Alex32(pretrained=True, progress=True, num_class=7, num_domain=4):
     model = AlexNetDANN()
@@ -190,6 +194,7 @@ def AlexNet32(pretrained=True, progress=True, num_class=7):
     model.classifier[6] = nn.Linear(4096, num_class)
 
     return model
+
 
 def get_model_parts_with_weights(model, fc_weight=1.0, disc_weight=1.0):
 
