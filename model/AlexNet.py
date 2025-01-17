@@ -17,11 +17,9 @@ class AlexNetDANN(nn.Module):
             nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.LocalResponseNorm(5, 1.e-4, 0.75),
             nn.Conv2d(64, 192, kernel_size=5, padding=2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.LocalResponseNorm(5, 1.e-4, 0.75),
             nn.Conv2d(192, 384, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(384, 256, kernel_size=3, padding=1),
@@ -70,7 +68,7 @@ class AlexNetDANN(nn.Module):
                 x = layer(x * 57.6)
             else:
                 x = layer(x)
-            if i in {5, 9}:
+            if i in {4, 7}:
                 results.append(x)
         return results
 

@@ -72,8 +72,9 @@ def main():
 
     # num_clustering을 도메인 숫자로 쓰는듯함.
     model = DANN_Alex(pretrained=True, num_domain=args.num_clustering).to(device)
-    params = get_model_parts_with_weights(model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
-    optimizer = optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay, nesterov=args.nesterov)
+    # fc[6]이랑 discriminator에 weight 더들어가는건데 계속 오류나서 일단 치움.
+    # params = get_model_parts_with_weights(model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay, nesterov=args.nesterov)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_decay_gamma)
     # inv_lr_scheduler랑 ExponentialLR 옵션이 있긴함. utils/scheduler.py 참고
 
@@ -96,7 +97,8 @@ def main():
                 all_features.append(merged_features)
 
         all_features = torch.cat(all_features, dim=0).to(device)
-        clustered_labels = kmeans.fit(all_features)
+        clustered_labels = kmeans.fit(all_features).to(device)
+        print("Cluster finished")
 
         # nmi를 구하려 했는데 보니까 cluster list를 label이랑 domain, before에 대해서 비교하는데 웃긴게 3클러스터인데 7인 label이랑 왜하는지 모르겠음
         """
@@ -125,14 +127,13 @@ def main():
         """
 
         # Data Imbalance 잡는 용도로 보임.
-        weight = 1. / torch.bincount(clustered_labels)
+        weight = 1. / torch.bincount(clustered_labels, minlength=args.num_clustering)
         weight = (weight / weight.sum() * args.num_clustering).to(device)
+        print(f"Calculated weight: {weight}")
 
         class_criterion = nn.CrossEntropyLoss()
         entropy_criterion = HLoss()
         domain_criterion = nn.CrossEntropyLoss(weight=weight)
-
-        clustered_domains = clustered_labels.cpu().numpy()
 
         # p = (float(i + epoch * len(source_loader)) / num_epochs / len(source_loader))
         p = epoch / num_epochs
@@ -143,14 +144,17 @@ def main():
         running_loss_class, running_loss_domain, running_loss_entropy = 0.0, 0.0, 0.0
         running_correct_class, running_correct_domain = 0, 0
 
-        for (images, labels, _), domains in tqdm(zip(source_loader, clustered_domains)):
-            images, labels, domains = images.to(device), labels.to(device), domains.to(device)
+        for batch_idx, (images, labels, indices) in enumerate(tqdm(source_loader)):
+            images, labels = images.to(device), labels.to(device)
+
+            batch_domains = clustered_labels[indices]
+
             label_out, domain_out = model(images, lambda_p=alpha)
             _, pred_class = torch.max(label_out, 1)
             _, pred_domain = torch.max(domain_out, 1)
 
             loss_class = class_criterion(label_out, labels)
-            loss_domain = domain_criterion(domain_out, domains)
+            loss_domain = domain_criterion(domain_out, batch_domains)
             loss_entropy = entropy_criterion(label_out)
 
             total_loss = loss_class + loss_domain + loss_entropy * beta
@@ -163,13 +167,13 @@ def main():
             running_loss_domain += loss_domain.item() * images.size(0)
             running_loss_entropy += loss_entropy.item() * images.size(0)
             running_correct_class += (pred_class == labels).sum().item()
-            running_correct_domain += (pred_domain == domains).sum().item()
+            running_correct_domain += (pred_domain == batch_domains).sum().item()
 
         epoch_loss_class = running_loss_class / len(source_loader.dataset)
         epoch_loss_domain = running_loss_domain / len(source_loader.dataset)
         epoch_loss_entropy = running_loss_entropy / len(source_loader.dataset)
-        epoch_acc_class = running_correct_class.double() / len(source_loader.dataset)
-        epoch_acc_domain = running_correct_domain.double() / len(source_loader.dataset)
+        epoch_acc_class = running_correct_class / len(source_loader.dataset)
+        epoch_acc_domain = running_correct_domain / len(source_loader.dataset)
 
         log = (
             f"Train: Epoch: {epoch} | "
@@ -182,14 +186,13 @@ def main():
         )
         print(log)
         wandb.log({
-            "Epoch": epoch,
-            "Alpha": alpha,
-            "Loss/Class": epoch_loss_class,
-            "Accuracy/Class": epoch_acc_class,
-            "Loss/Domain": epoch_loss_domain,
-            "Accuracy/Domain": epoch_acc_domain,
-            "Loss/Entropy": epoch_loss_entropy,
-            "Loss/Total": epoch_loss_class + epoch_loss_domain + epoch_loss_entropy * beta,
+            "Train/Accuracy/Class": epoch_acc_class,
+            "Train/Accuracy/Domain": epoch_acc_domain,
+            "Train/Alpha": alpha,
+            "Train/Loss/Class": epoch_loss_class,
+            "Train/Loss/Domain": epoch_loss_domain,
+            "Train/Loss/Entropy": epoch_loss_entropy,
+            "Train/Loss/Total": epoch_loss_class + epoch_loss_domain + epoch_loss_entropy * beta,
         })
 
         model.eval()
@@ -209,7 +212,7 @@ def main():
                 _, predicted_domains = torch.max(domain_preds.data, 1)
                 total += labels.size(0)
                 label_correct += (predicted_labels == labels).sum().item()
-                domain_correct += (predicted_labels == labels).sum().item()
+                domain_correct += (predicted_domains == domains).sum().item()
 
             label_acc = label_correct / total
             domain_acc = domain_correct / total
