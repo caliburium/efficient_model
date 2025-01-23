@@ -28,8 +28,8 @@ def main():
     parser.add_argument('--num_clustering', type=int, default=3)
 
     # Model Weights Tuning
-    parser.add_argument('--fc_weight', type=float, default=10.0)
-    parser.add_argument('--disc_weight', type=float, default=10.0)
+    parser.add_argument('--fc_weight', type=float, default=15.0)
+    parser.add_argument('--disc_weight', type=float, default=15.0)
 
     # Optimizer Settings
     parser.add_argument('--lr', type=float, default=0.001)
@@ -70,13 +70,20 @@ def main():
 
     kmeans = KMeans(n_clusters=args.num_clustering, device=device)
 
-    # num_clustering을 도메인 숫자로 쓰는듯함.
     model = DANN_Alex(pretrained=True, num_domain=args.num_clustering).to(device)
-    # fc[6]이랑 discriminator에 weight 더들어가는건데 계속 오류나서 일단 치움.
-    # params = get_model_parts_with_weights(model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay, nesterov=args.nesterov)
+    params = get_model_parts_with_weights(model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
+    optimizer = optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay, nesterov=args.nesterov)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_decay_gamma)
     # inv_lr_scheduler랑 ExponentialLR 옵션이 있긴함. utils/scheduler.py 참고
+    all_labels = []
+    all_domains = []
+    for _, labels, domains in source_loader:
+        all_labels.append(labels)
+        all_domains.append(domains)
+
+    # Concatenate all labels and domains into a single tensor
+    true_labels = torch.cat(all_labels).to(device)
+    domain_labels = torch.cat(all_domains).to(device)
 
     for epoch in range(num_epochs):
         model.eval()
@@ -100,11 +107,9 @@ def main():
         clustered_labels = kmeans.fit(all_features).to(device)
         print("Cluster finished")
 
-        # nmi를 구하려 했는데 보니까 cluster list를 label이랑 domain, before에 대해서 비교하는데 웃긴게 3클러스터인데 7인 label이랑 왜하는지 모르겠음
-        """
-        true_labels = torch.tensor(source_loader.dataset.labels, dtype=torch.long, device=device)
-        domain_labels = torch.tensor(source_loader.dataset.domains, dtype=torch.long, device=device)
-        cluster_before = getattr(source_loader.dataset, 'cluster_before', None)  # 이전 클러스터 정보 가져오기 (있다면)
+        # true_labels = torch.tensor(source_loader.dataset.label, dtype=torch.long, device=device)
+        # domain_labels = torch.tensor(source_loader.dataset.domain, dtype=torch.long, device=device)
+        cluster_before = getattr(source_loader.dataset, 'cluster_before', None)
 
         class_nmi = normalized_mutual_info(clustered_labels, true_labels)
         domain_nmi = normalized_mutual_info(clustered_labels, domain_labels)
@@ -124,7 +129,6 @@ def main():
         if before_nmi is not None:
             wandb_log_data["NMI/Before"] = before_nmi
         wandb.log(wandb_log_data)
-        """
 
         # Data Imbalance 잡는 용도로 보임.
         weight = 1. / torch.bincount(clustered_labels, minlength=args.num_clustering)
@@ -202,22 +206,19 @@ def main():
 
         # Evaluate the model
         def tester(loader, group):
-            label_correct, domain_correct, total = 0, 0, 0
-            for images, labels, domains in loader:
-                images, labels, domains = images.to(device), labels.to(device), domains.to(device)
-                label_out, domain_out = model(images, lambda_p=0.0)
+            label_correct, total = 0, 0
+            for images, labels, _ in loader:
+                images, labels = images.to(device), labels.to(device)
+                label_out, _ = model(images, lambda_p=0.0)
                 label_preds = F.log_softmax(label_out, dim=1)
-                domain_preds = F.log_softmax(label_out, dim=1)
                 _, predicted_labels = torch.max(label_preds.data, 1)
-                _, predicted_domains = torch.max(domain_preds.data, 1)
                 total += labels.size(0)
                 label_correct += (predicted_labels == labels).sum().item()
-                domain_correct += (predicted_domains == domains).sum().item()
 
             label_acc = label_correct / total
-            domain_acc = domain_correct / total
-            wandb.log({f"{group} Label Accuracy": label_acc, f"{group} Domain Accuracy": domain_acc}, step=epoch + 1)
-            print(f"{group} Label Accuracy: {label_acc * 100:.3f}%, Domain Accuracy: {domain_acc * 100:.3f}%")
+            wandb.log({f"{group} Label Accuracy": label_acc}, step=epoch)
+            print(f"{group} Label Accuracy: {label_acc * 100:.3f}%")
+
 
         with torch.no_grad():
             tester(art_loader, 'Art Paintings')
