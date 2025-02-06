@@ -21,18 +21,18 @@ class Discriminator32(nn.Module):
         x = self.discriminator(x)
         return x
 
-class Discriminator228(nn.Module):
-    def __init__(self, num_domains):
-        super(Discriminator228, self).__init__()
+class Discriminator224(nn.Module):
+    def __init__(self, num_domains, input_size=256*6*6):
+        super(Discriminator224, self).__init__()
 
         self.discriminator = nn.Sequential(
-            nn.Linear(64 * 28 * 28, 256),
-            nn.BatchNorm1d(256),
+            nn.Dropout(),
+            nn.Linear(input_size, 4096),
             nn.ReLU(inplace=True),
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
-            nn.Linear(128, num_domains)
+            nn.Linear(4096, num_domains)
         )
 
     def forward(self, x, lambda_p):

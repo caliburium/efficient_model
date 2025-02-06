@@ -10,9 +10,9 @@ class Id(nn.Module):
         return x
 
 
-class AlexNetCaffe(nn.Module):
-    def __init__(self, num_classes=7, dropout=True):
-        super(AlexNetCaffe, self).__init__()
+class AlexNetCaffe32(nn.Module):
+    def __init__(self, num_classes=10, dropout=True):
+        super(AlexNetCaffe32, self).__init__()
 
         self.features = nn.Sequential(OrderedDict([
             ("conv1", nn.Conv2d(3, 96, kernel_size=11, stride=4)),
@@ -48,3 +48,49 @@ class AlexNetCaffe(nn.Module):
         fcl = self.classifier(x)
         x = self.class_classifier(fcl)
         return fcl, x
+
+
+class AlexNetCaffe228(nn.Module):
+    def __init__(self, num_classes=7, dropout=True):
+        super(AlexNetCaffe228, self).__init__()
+
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(64, 192, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(192, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2)
+        )
+
+        self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Linear(256 * 6 * 6, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True)
+        )
+
+        self.class_classifier = nn.Linear(4096, num_classes)
+
+    def forward(self, x, out='feature'):
+        # 57.6 is the magic number needed to bring torch data back to the range of caffe data, based on used std
+        x = self.features(x * 57.6)
+        x = self.avgpool(x)
+        feature = x.view(x.size(0), -1)
+        fcl = self.classifier(feature)
+        x = self.class_classifier(fcl)
+        if out=='feature':
+            return feature, x
+        elif out=='fcl':
+            return fcl, x
