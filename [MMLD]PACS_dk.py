@@ -10,7 +10,7 @@ from functions.EntropyLoss import HLoss
 from functions.KMeans import KMeans
 from dataloader.pacs_loader import pacs_loader
 from functions.nmi import normalized_mutual_info
-from model.AlexNet import DANN_Alex, get_model_parts_with_weights
+from model.AlexNet import DANN_Alex, get_model_parts_with_weights, get_model_parts_with_weights_with_lr
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # https://github.com/mil-tokyo/dg_mmld/tree/master
@@ -32,14 +32,15 @@ def main():
     parser.add_argument('--disc_weight', type=float, default=15.0)
 
     # Optimizer Settings
-    parser.add_argument('--lr', type=float, default=0.001)
+    # parser.add_argument('--lr', type=float, default=1e-3) #TODO: 너무 큰가? 한번 돌면 weight 가 1e17 막 이렇게 뜸
+    parser.add_argument('--lr', type=float, default=1e-6)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
     parser.add_argument('--nesterov', action='store_true')
 
     # Schedular Settings
     parser.add_argument('--lr_step', type=int, default=24)
-    parser.add_argument('--lr_decay_gamma', type=float, default=0.1)
+    parser.add_argument('--lr_decay_gamma', type=float, default=0.1) #TODO: 너무 크다
 
     # Grad Reverse Layer
     parser.add_argument('--grl_weight', type=float, default=1.0)
@@ -71,7 +72,7 @@ def main():
     kmeans = KMeans(n_clusters=args.num_clustering, device=device)
 
     model = DANN_Alex(pretrained=True, num_domain=args.num_clustering).to(device)
-    params = get_model_parts_with_weights(model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
+    params = get_model_parts_with_weights_with_lr(model, fc_weight=args.fc_weight, disc_weight=args.disc_weight, lr=args.lr)
     optimizer = optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay, nesterov=args.nesterov)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_decay_gamma)
     # inv_lr_scheduler랑 ExponentialLR 옵션이 있긴함. utils/scheduler.py 참고
@@ -172,6 +173,14 @@ def main():
             running_loss_entropy += loss_entropy.item() * images.size(0)
             running_correct_class += (pred_class == labels).sum().item()
             running_correct_domain += (pred_domain == batch_domains).sum().item()
+
+            log_batch = (
+                f"Train: Batch: {batch_idx} | "
+                f"Loss Class: {loss_class:.4f} | "
+                f"Loss Domain: {loss_domain:.4f} | "
+                f"Loss Entropy: {loss_entropy:.4f}"
+            )
+            print(log_batch)
 
         epoch_loss_class = running_loss_class / len(source_loader.dataset)
         epoch_loss_domain = running_loss_domain / len(source_loader.dataset)

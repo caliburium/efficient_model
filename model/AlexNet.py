@@ -201,3 +201,12 @@ def get_model_parts_with_weights(model, fc_weight=1.0, disc_weight=1.0):
         {'params': [model.classifier[6].weight, model.classifier[6].bias], 'lr': 1.0 * fc_weight},
         {'params': model.discriminator.parameters(), 'lr': 1.0 * disc_weight},
     ]
+
+
+def get_model_parts_with_weights_with_lr(model, fc_weight=1.0, disc_weight=1.0, lr=1e-3):
+    return [
+        {'params': model.features.parameters(), 'lr': lr},
+        {'params': model.classifier[:-1].parameters(), 'lr': lr},
+        {'params': [model.classifier[6].weight, model.classifier[6].bias], 'lr': lr * fc_weight},
+        {'params': model.discriminator.parameters(), 'lr': lr * disc_weight},
+    ]
