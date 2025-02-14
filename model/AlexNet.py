@@ -194,10 +194,10 @@ def AlexNet32(pretrained=True, progress=True, num_class=7):
     return model
 
 
-def get_model_parts_with_weights(model, fc_weight=1.0, disc_weight=1.0):
+def get_model_parts_with_weights(model, lr, fc_weight=1.0, disc_weight=1.0):
     return [
-        {'params': model.features.parameters(), 'lr': 1.0},
-        {'params': model.classifier[:-1].parameters(), 'lr': 1.0},
-        {'params': [model.classifier[6].weight, model.classifier[6].bias], 'lr': 1.0 * fc_weight},
-        {'params': model.discriminator.parameters(), 'lr': 1.0 * disc_weight},
+        {'params': model.features.parameters(), 'lr': lr},
+        {'params': model.classifier[:-1].parameters(), 'lr': lr},
+        {'params': [model.classifier[6].weight, model.classifier[6].bias], 'lr': lr * fc_weight},
+        {'params': model.discriminator.parameters(), 'lr': lr * disc_weight},
     ]

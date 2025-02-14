@@ -1,4 +1,3 @@
-
 import argparse
 import torch
 import torch.nn as nn
@@ -12,11 +11,11 @@ import wandb
 import time
 from tqdm import tqdm
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
-class DANN(nn.Module):
+class Model(nn.Module):
     def __init__(self, n_partition = 4):
-        super(DANN, self).__init__()
+        super(Model, self).__init__()
         self.restored = False
         self.n_partition = n_partition
 
@@ -108,6 +107,7 @@ class DANN(nn.Module):
                 #     partitioned_layer.append(nn.ReLU(inplace=True))
 
             self.partitioned_classifier.append(partitioned_layer)
+
     def sync_classifier_with_subnetworks(self):
         linear_layers = [layer for layer in self.classifier if isinstance(layer, nn.Linear)]
         linear_layers_subnet = [[layer for layer in partitioned_classifier if isinstance(layer, nn.Linear)] for partitioned_classifier in self.partitioned_classifier]
@@ -189,8 +189,7 @@ def main():
     parser.add_argument('--source2', type=str, default='MNIST')
     parser.add_argument('--target', type=str, default='CIFAR10')
     parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--lr_cls', type=float, default=0.01)
-    parser.add_argument('--lr_dom', type=float, default=0.1)
+
     args = parser.parse_args()
 
     pre_epochs = args.pretrain_epoch
@@ -210,13 +209,11 @@ def main():
 
     print("Data load complete, start training")
 
-    model = DANN().to(device)
+    model = Model().to(device)
 
     pre_opt = optim.Adam(model.parameters(), lr=1e-5)
-    optimizer_cls = optim.SGD(list(model.feature.parameters()) + list(model.classifier.parameters()), lr=args.lr_cls, momentum=0.9, weight_decay=1e-6)
-    optimizer_dom = optim.SGD(list(model.feature.parameters()) + list(model.discriminator.parameters()), lr=args.lr_dom, momentum=0.9, weight_decay=1e-6)
-    scheduler_cls = optim.lr_scheduler.LambdaLR(optimizer_cls, lr_lambda)
-    scheduler_dom = optim.lr_scheduler.LambdaLR(optimizer_dom, lr_lambda)
+    optimizer = optim.SGD(list(model.parameters()), lr=args.lr, momentum=0.9, weight_decay=1e-6)
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(pre_epochs):
