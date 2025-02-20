@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--disc_weight', type=float, default=10.0)
 
     # Optimizer Settings
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-6)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
     parser.add_argument('--nesterov', action='store_true')

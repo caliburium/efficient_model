@@ -67,9 +67,12 @@ def main():
             lambda_p = 1.0
 
             # Training with source data
-            mnist_images, mnist_labels = mnist_data.to(device)
-            svhn_images, svhn_labels = svhn_data.to(device)
-            cifar_images, cifar_labels = cifar_data.to(device)
+            mnist_images, mnist_labels = mnist_data
+            mnist_images, mnist_labels = mnist_images.to(device), mnist_labels.to(device)
+            svhn_images, svhn_labels = svhn_data
+            svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
+            cifar_images, cifar_labels = cifar_data
+            cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
             mnist_out_part, mnist_out, _ = model(mnist_images, alpha=lambda_p)
             mnist_loss = criterion(mnist_out_part, mnist_labels)
@@ -132,10 +135,12 @@ def main():
 
             optimizer.zero_grad()
 
-            # Training with source data
-            mnist_images, mnist_labels = mnist_data.to(device)
-            svhn_images, svhn_labels = svhn_data.to(device)
-            cifar_images, cifar_labels = cifar_data.to(device)
+            mnist_images, mnist_labels = mnist_data
+            mnist_images, mnist_labels = mnist_images.to(device), mnist_labels.to(device)
+            svhn_images, svhn_labels = svhn_data
+            svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
+            cifar_images, cifar_labels = cifar_data
+            cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
             mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
             svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)

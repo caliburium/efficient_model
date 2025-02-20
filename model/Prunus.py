@@ -10,7 +10,7 @@ class Prunus(nn.Module):
         self.restored = False
         self.n_partition = n_partition
 
-        self.feature = nn.Sequential(
+        self.features = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=64, kernel_size=5),  # 28
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=3, stride=2),  # 13
@@ -51,7 +51,7 @@ class Prunus(nn.Module):
 
     # Method to partition the classifier into sub-networks
     def create_partitioned_classifier(self):
-        self.partitioned_classifier = []  # ModuleList로 초기화
+        self.partitioned_classifier = nn.ModuleList()  # ModuleList로 초기화
 
         linear_layers = []
         for layer in self.classifier:
@@ -139,7 +139,7 @@ class Prunus(nn.Module):
 
     def forward(self, input_data, alpha=1.0):
         input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
-        feature = self.feature(input_data)
+        feature = self.features(input_data)
         feature = feature.view(-1, 128 * 1 * 1)
         feature = self.pre_classifier(feature)
         reverse_feature = ReverseLayerF.apply(feature, alpha)
@@ -180,6 +180,4 @@ def prunus_weights(model, lr, fc_weight=1.0, disc_weight=1.0):
         {'params': model.discriminator.parameters(), 'lr': lr * disc_weight},
         {'params': model.discriminator_fc.parameters(), 'lr': lr * disc_weight},
         {'params': model.partition_switcher.parameters(), 'lr': lr},
-        {'params': model.create_partitioned_classifier.parameters(), 'lr': lr},
-        {'params': model.sync_classifier_with_subnetworks.parameters(), 'lr': lr},
     ]
