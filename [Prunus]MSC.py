@@ -64,6 +64,9 @@ def main():
         num_batches = min(len(mnist_loader), len(svhn_loader), len(cifar_loader))
 
         for mnist_data, svhn_data, cifar_data in zip(mnist_loader, svhn_loader, cifar_loader):
+
+            pre_opt.zero_grad()
+            
             lambda_p = 1.0
 
             # Training with source data
@@ -74,20 +77,25 @@ def main():
             cifar_images, cifar_labels = cifar_data
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
-            mnist_out_part, mnist_out, _ = model(mnist_images, alpha=lambda_p)
+            mnist_out_part, _, _ = model(mnist_images, alpha=lambda_p)
             mnist_loss = criterion(mnist_out_part, mnist_labels)
-            svhn_out_part, svhn_out, _ = model(svhn_images, alpha=lambda_p)
+            
+            # mnist_loss.backward()
+            
+            svhn_out_part, _, _ = model(svhn_images, alpha=lambda_p)
             svhn_loss = criterion(svhn_out_part, svhn_labels)
-            cifar_out_part, cifar_out, _ = model(cifar_images, alpha=lambda_p)
-            cifar_loss = criterion(svhn_out, cifar_labels)
-
-            loss = mnist_loss + svhn_loss + cifar_loss
-
-            pre_opt.zero_grad()
+            
+            # svhn_loss.backward()
+            
+            cifar_out_part, _, _ = model(cifar_images, alpha=lambda_p)
+            cifar_loss = criterion(cifar_out_part, cifar_labels)
+            
+            # cifar_loss.backward()
+            loss  = mnist_loss + svhn_loss + cifar_loss
             loss.backward()
+            
             pre_opt.step()
 
-            # Pretrain하는 부분이라 Partitioned 안된 상태로 봐야하는거아닌가?
             mnist_acc = (torch.argmax(mnist_out_part, dim=1) == mnist_labels).sum().item() / mnist_labels.size(0)
             svhn_acc = (torch.argmax(svhn_out_part, dim=1) == svhn_labels).sum().item() / svhn_labels.size(0)
             cifar_acc = (torch.argmax(cifar_out_part, dim=1) == cifar_labels).sum().item() / cifar_labels.size(0)
@@ -146,9 +154,9 @@ def main():
             svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
             cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
-            mnist_out_part, mnist_class_out, mnist_domain_out = model(mnist_images, alpha=lambda_p)
-            svhn_out_part, svhn_class_out, svhn_domain_out = model(svhn_images, alpha=lambda_p)
-            cifar_out_part, cifar_class_out, cifar_domain_out = model(cifar_images, alpha=lambda_p)
+            mnist_out_part, _, mnist_domain_out = model(mnist_images, alpha=lambda_p)
+            svhn_out_part, _, svhn_domain_out = model(svhn_images, alpha=lambda_p)
+            cifar_out_part, _, cifar_domain_out = model(cifar_images, alpha=lambda_p)
 
             mnist_label_loss = criterion(mnist_out_part, mnist_labels)
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
