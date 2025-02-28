@@ -15,6 +15,8 @@ def main():
     parser.add_argument('--epoch', type=int, default=200)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--momentum', type=float, default=0.90)
+    parser.add_argument('--opt_decay', type=float, default=1e-6)
     args = parser.parse_args()
 
     num_epochs = args.epoch
@@ -35,7 +37,7 @@ def main():
     model = models.vgg16(pretrained=False)
     model.classifier[6] = nn.Linear(in_features=4096, out_features=10)
     model = model.to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
