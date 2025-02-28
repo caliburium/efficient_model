@@ -22,7 +22,7 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model",
                config=args.__dict__,
-               name="[VGG]MSC_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[VGG]MSC_pretrain:False_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     MNIST_loader, MNIST_loader_test = data_loader('MNIST', args.batch_size)
@@ -32,7 +32,7 @@ def main():
 
     print("Data load complete, start training")
 
-    model = models.vgg16(pretrained=True)
+    model = models.vgg16(pretrained=False)
     model.classifier[6] = nn.Linear(in_features=4096, out_features=10)
     model = model.to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
