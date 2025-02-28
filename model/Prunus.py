@@ -1,53 +1,55 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as models
 from functions.ReverseLayerF import ReverseLayerF
 
 
-class Prunus(nn.Module):
-    def __init__(self, n_partition = 4):
-        super(Prunus, self).__init__()
+class PrunusVGG(nn.Module):
+    def __init__(self, pretrained=True, n_partition = 4, part_layer = 384):
+        super(PrunusVGG, self).__init__()
         self.restored = False
         self.n_partition = n_partition
+        self.part_layer = part_layer
 
-        self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=5),  # 28
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=2),  # 13
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=5),  # 9
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=2),  # 4
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4),  # 1
-            nn.ReLU()
-        )
+        vgg16 = models.vgg16(pretrained=pretrained)
+        self.features = vgg16.features
 
         self.pre_classifier = nn.Sequential(
-            nn.Linear(128 * 1 * 1, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
+            nn.Identity(),
         )
 
         self.classifier = nn.Sequential(
-            nn.Linear(1024, 256),
-            nn.BatchNorm1d(256),
+            nn.Linear(1024, part_layer),
+            nn.BatchNorm1d(part_layer),
             nn.ReLU(inplace=True),
-            nn.Linear(256, 10)
+            nn.Linear(part_layer, 10)
         )
 
         self.discriminator = nn.Sequential(
-            nn.Linear(1024, 256),
-            nn.BatchNorm1d(256),
+            nn.Linear(1024, part_layer),
+            nn.BatchNorm1d(part_layer),
             nn.ReLU(inplace=True),
         )
-        self.discriminator_fc = nn.Linear(256, 2)
+        self.discriminator_fc = nn.Linear(part_layer, 2)
 
-        self.partition_switcher = nn.Sequential(nn.Linear(256, self.n_partition),
+        self.partition_switcher = nn.Sequential(nn.Linear(part_layer, self.n_partition),
                                                 nn.ReLU(inplace=True))
 
 
         self.create_partitioned_classifier()
         self.sync_classifier_with_subnetworks()
+        self.feature_dim = None
+
         print('')
+
+    def _initialize_pre_classifier(self, feature_size):
+        self.feature_dim = feature_size
+        self.pre_classifier = nn.Sequential(
+            nn.Linear(feature_size, 1024),  # 자동 설정
+            nn.BatchNorm1d(1024),
+            nn.ReLU(inplace=True),
+        )
 
     # Method to partition the classifier into sub-networks
     def create_partitioned_classifier(self):
@@ -138,10 +140,14 @@ class Prunus(nn.Module):
         # print('')
 
     def forward(self, input_data, alpha=1.0):
-        input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
         feature = self.features(input_data)
-        feature = feature.view(-1, 128 * 1 * 1)
+        feature = feature.view(feature.size(0), -1)
+
+        if self.feature_dim is None:
+            self._initialize_pre_classifier(feature.size(1))
+            self.to(input_data.device)
         feature = self.pre_classifier(feature)
+
         reverse_feature = ReverseLayerF.apply(feature, alpha)
         domain_penul = self.discriminator(reverse_feature)
         domain_output = self.discriminator_fc(domain_penul)
@@ -168,14 +174,14 @@ class Prunus(nn.Module):
         class_output_partitioned = torch.cat(class_output, dim=0)
         class_output = self.classifier(feature)
 
-        return class_output_partitioned, class_output, domain_output
+        return class_output_partitioned, class_output, domain_output, partition_idx
 
 
-def prunus_weights(model, lr, fc_weight=1.0, disc_weight=1.0):
+def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0):
 
     return [
         {'params': model.features.parameters(), 'lr': lr},
-        {'params': model.pre_classifier.parameters(), 'lr': lr * fc_weight},
+        {'params': model.pre_classifier.parameters(), 'lr': lr * pre_weight},
         {'params': model.classifier.parameters(), 'lr': lr * fc_weight},
         {'params': model.discriminator.parameters(), 'lr': lr * disc_weight},
         {'params': model.discriminator_fc.parameters(), 'lr': lr * disc_weight},
