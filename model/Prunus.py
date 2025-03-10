@@ -2,52 +2,68 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+from model.SimpleCNN import SimpleCNN
 from functions.ReverseLayerF import ReverseLayerF
 
 
-class PrunusVGG(nn.Module):
-    def __init__(self, pretrained=True, n_partition = 4, part_layer = 384):
-        super(PrunusVGG, self).__init__()
+class Prunus(nn.Module):
+    def __init__(self, feature_extractor='SimpleCNN', pretrained=True, num_classes = 10,
+                 pre_classifier_out = 1024, n_partition = 2, part_layer = 384,
+                 device='cuda' if torch.cuda.is_available() else 'cpu'):
+        super(Prunus, self).__init__()
         self.restored = False
+        self.num_classes = num_classes
+        self.pre_classifier_out = pre_classifier_out
         self.n_partition = n_partition
         self.part_layer = part_layer
+        self.device = device
 
-        vgg16 = models.vgg16(pretrained=pretrained)
-        self.features = vgg16.features
+        if feature_extractor == 'SimpleCNN': # 32*32 -> 128*4*4 | 228*228 -> 128*28*28
+            self.features = SimpleCNN().features
+        elif feature_extractor == 'Alexnet': # 228*228 -> 256*6*6
+            alexnet = models.alexnet(pretrained=pretrained)
+            self.features = alexnet.features
+        elif feature_extractor == 'VGG16': # 32*32 -> 512*1*1 | 228*228 -> 512*7*7
+            vgg16 = models.vgg16(pretrained=pretrained)
+            self.features = vgg16.features
+        elif feature_extractor == 'ResNet50': # 228*228 -> 2048*1*1
+            resnet50 = models.resnet50(pretrained=pretrained)
+            self.features = nn.Sequential(*list(resnet50.children())[:-2])
 
-        self.pre_classifier = nn.Sequential(
-            nn.Identity(),
-        )
+
+        self.pre_classifier = nn.Sequential(nn.Identity())
 
         self.classifier = nn.Sequential(
-            nn.Linear(1024, part_layer),
+            nn.Linear(pre_classifier_out, part_layer),
             nn.BatchNorm1d(part_layer),
             nn.ReLU(inplace=True),
-            nn.Linear(part_layer, 10)
+            nn.Linear(part_layer, num_classes)
         )
 
         self.discriminator = nn.Sequential(
-            nn.Linear(1024, part_layer),
+            nn.Linear(pre_classifier_out, part_layer),
             nn.BatchNorm1d(part_layer),
             nn.ReLU(inplace=True),
         )
         self.discriminator_fc = nn.Linear(part_layer, 2)
 
-        self.partition_switcher = nn.Sequential(nn.Linear(part_layer, self.n_partition),
-                                                nn.ReLU(inplace=True))
-
+        self.partition_switcher = nn.Sequential(
+            nn.Linear(part_layer, self.n_partition),
+            nn.ReLU(inplace=True)
+        )
 
         self.create_partitioned_classifier()
         self.sync_classifier_with_subnetworks()
         self.feature_dim = None
+        self.to(self.device)
 
-        print('')
 
+    # Pre_classifier that can correspond to any input value
     def _initialize_pre_classifier(self, feature_size):
         self.feature_dim = feature_size
         self.pre_classifier = nn.Sequential(
-            nn.Linear(feature_size, 1024),  # 자동 설정
-            nn.BatchNorm1d(1024),
+            nn.Linear(feature_size, self.pre_classifier_out),
+            nn.BatchNorm1d(self.pre_classifier_out),
             nn.ReLU(inplace=True),
         )
 
@@ -129,11 +145,10 @@ class PrunusVGG(nn.Module):
                 ws_ = torch.cat(ws_, dim = 1)
                 bs_ = b_
 
-
-
+            # 이부분 .detach().clone() 넣었는데 문제없나?
             with torch.no_grad():
-                linear_layer.weight.copy_(ws_)
-                linear_layer.bias.copy_(bs_)
+                linear_layer.weight = nn.Parameter(ws_.detach().clone())
+                linear_layer.bias = nn.Parameter(bs_.detach().clone())
 
         weight_classifier = self.classifier[3].bias[0]
         # print(weight_classifier)
@@ -169,8 +184,9 @@ class PrunusVGG(nn.Module):
                 xx = layer(xx)
             class_output.append(xx)
 
-            # class_output.append(self.partitioned_classifier[partition_idx[b_i]](feature[b_i].unsqueeze(0)))
-        self.sync_classifier_with_subnetworks()
+        # class_output.append(self.partitioned_classifier[partition_idx[b_i]](feature[b_i].unsqueeze(0)))
+        if self.training:
+            self.sync_classifier_with_subnetworks()
         class_output_partitioned = torch.cat(class_output, dim=0)
         class_output = self.classifier(feature)
 

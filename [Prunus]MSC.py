@@ -4,23 +4,26 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from functions.lr_lambda import lr_lambda
-from model.Prunus import PrunusVGG, prunus_weights
+from model.Prunus import Prunus, prunus_weights
 from dataloader.data_loader import data_loader
 import numpy as np
 import wandb
 import time
 
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--pretrain_epoch', type=int, default=0)
+    parser.add_argument('--epoch', type=int, default=200)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--pretrained', action='store_true', default=True)
-    parser.add_argument('--num_partition', type=int, default=4)
-    parser.add_argument('--part_layer', type=int, default=840)
+    parser.add_argument('--feature_extractor', type=str, default='SimpleCNN')
+    parser.add_argument('--pretrained', action='store_true', default=False)
+    parser.add_argument('--num_partition', type=int, default=2)
+    parser.add_argument('--num_classes', type=int, default=10)
+    parser.add_argument('--pre_classifier_out', type=int, default=1024)
+    parser.add_argument('--part_layer', type=int, default=384)
 
     # Optimizer
     parser.add_argument('--lr', type=float, default=0.01)
@@ -29,8 +32,8 @@ def main():
 
     # parameter weight amplifier
     parser.add_argument('--pre_weight', type=float, default=1.0)
-    parser.add_argument('--fc_weight', type=float, default=1.0)
-    parser.add_argument('--disc_weight', type=float, default=1.0)
+    parser.add_argument('--fc_weight', type=float, default=10.0)
+    parser.add_argument('--disc_weight', type=float, default=0.2)
 
 
     args = parser.parse_args()
@@ -42,7 +45,7 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model",
                config=args.__dict__,
-               name="Prunus" + str(args.num_partition) + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[Prunus" + str(args.num_partition) + "]MSC_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -51,10 +54,17 @@ def main():
 
     print("Data load complete, start training")
 
-    model = PrunusVGG(pretrained=args.pretrained,
-                      n_partition=args.num_partition,
-                      part_layer=args.part_layer).to(device)
-    pre_opt = optim.Adam(model.parameters(), lr=1e-5)
+    model = Prunus(feature_extractor=args.feature_extractor,
+                   pretrained=args.pretrained,
+                   num_classes=args.num_classes,
+                   pre_classifier_out=args.pre_classifier_out,
+                   n_partition=args.num_partition,
+                   part_layer=args.part_layer,
+                   device=device
+                   )
+
+    pre_opt = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+
     param = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight)
     optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
@@ -116,31 +126,33 @@ def main():
             print(f'Batches [{i + 1}/{min(len(mnist_loader), len(svhn_loader), len(cifar_loader))}] | '
                   f'MNIST Loss: {mnist_loss.item():.4f} | '
                   f'SVHN Loss: {svhn_loss.item():.4f} | '
-                  f'CIFAR10 Loss: {cifar_loss.item():.4f} | '
+                  f'CIFAR Loss: {cifar_loss.item():.4f} | '
                   f'MNIST Accuracy: {mnist_acc * 100:.3f}% | '
                   f'SVHN Accuracy: {svhn_acc * 100:.3f}% | '
-                  f'CIFAR10 Accuracy: {cifar_acc * 100:.3f}%')
+                  f'CIFAR Accuracy: {cifar_acc * 100:.3f}%')
             """
             i += 1
 
         logs = {
             'PreTrain/MNIST Loss': total_mnist_loss / num_batches,
             'PreTrain/SVHN Loss': total_svhn_loss / num_batches,
-            'PreTrain/CIFAR10 Loss': total_cifar_loss / num_batches,
+            'PreTrain/CIFAR Loss': total_cifar_loss / num_batches,
             'PreTrain/MNIST Accuracy': total_mnist_acc / num_batches * 100,
             'PreTrain/SVHN Accuracy': total_svhn_acc / num_batches * 100,
-            'PreTrain/CIFAR10 Accuracy': total_cifar_acc / num_batches * 100,
+            'PreTrain/CIFAR Accuracy': total_cifar_acc / num_batches * 100,
         }
 
         print(f"Epoch {epoch + 1} logs:", logs)
         # wandb.log(logs, step=epoch + 1)
 
+    print("Pretraining done")
 
     for epoch in range(num_epochs):
         start_time = time.time()
         model.train()
 
         loss_ani_domain_epoch, loss_num_domain_epoch, loss_label_epoch = 0, 0, 0
+        total_mnist_loss, total_svhn_loss, total_cifar_loss, total_label_loss = 0, 0, 0, 0
         total_mnist_correct, total_svhn_correct, total_cifar_correct = 0, 0, 0
         total_mnist_domain_correct, total_svhn_domain_correct, total_cifar_domain_correct = 0, 0, 0
         total_mnist_samples, total_svhn_samples, total_cifar_samples = 0, 0, 0
@@ -148,8 +160,10 @@ def main():
         total_samples = 0
 
         for i, (mnist_data, svhn_data, cifar_data) in enumerate(zip(mnist_loader, svhn_loader, cifar_loader)):
-            p = (float(i + epoch * min(len(mnist_loader), len(svhn_loader), len(cifar_loader))) /
-                 num_epochs / min(len(mnist_loader), len(svhn_loader), len(cifar_loader)))
+            #p = (float(i + epoch * min(len(mnist_loader), len(svhn_loader), len(cifar_loader))) /
+            #     num_epochs / min(len(mnist_loader), len(svhn_loader), len(cifar_loader)))
+            #lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
+            p = epoch / num_epochs
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
             optimizer.zero_grad()
@@ -195,6 +209,10 @@ def main():
             loss.backward()
             optimizer.step()
 
+            total_mnist_loss += mnist_label_loss.item()
+            total_svhn_loss += svhn_label_loss.item()
+            total_cifar_loss += cifar_label_loss.item()
+
             mnist_correct = (torch.argmax(mnist_out_part, dim=1) == mnist_labels).sum().item()
             svhn_correct = (torch.argmax(svhn_out_part, dim=1) == svhn_labels).sum().item()
             cifar_correct = (torch.argmax(cifar_out_part, dim=1) == cifar_labels).sum().item()
@@ -235,6 +253,12 @@ def main():
         partition_ratio_str = " | ".join(
             [f"Partition {p}: {partition_ratios[p]:.2f}%" for p in range(args.num_partition)])
 
+        mnist_avg_loss = total_mnist_loss / total_mnist_samples
+        svhn_avg_loss = total_svhn_loss / total_svhn_samples
+        cifar_avg_loss = total_cifar_loss / total_cifar_samples
+        label_avg_loss = (total_mnist_loss + total_svhn_loss + total_cifar_loss) / (
+                    total_mnist_samples + total_svhn_samples + total_cifar_samples)
+
         mnist_acc_epoch = total_mnist_correct / total_mnist_samples * 100
         svhn_acc_epoch = total_svhn_correct / total_svhn_samples * 100
         cifar_acc_epoch = total_cifar_correct / total_cifar_samples * 100
@@ -258,13 +282,19 @@ def main():
               f'MNIST Domain Acc: {mnist_domain_acc_epoch:.3f}% | '
               f'SVHN Domain Acc: {svhn_domain_acc_epoch:.3f}% | '
               f'CIFAR Domain Acc: {cifar_domain_acc_epoch:.3f}%')
+        wandb.log({
+
+        }, step=epoch + 1)
 
         wandb.log({
             **{f"Train/Partition {p} Ratio": partition_ratios[p].item() for p in range(args.num_partition)},
             'Train/Domain Numbers Loss': loss_num_domain_epoch,
             'Train/Domain Animals Loss': loss_ani_domain_epoch,
-            'Train/Label Loss': loss_label_epoch,
-            'Train/Total Loss': loss_num_domain_epoch + loss_ani_domain_epoch + loss_label_epoch,
+            'Train/Label Loss': label_avg_loss,
+            'Train/MNIST Loss': mnist_avg_loss,
+            'Train/SVHN Loss': svhn_avg_loss,
+            'Train/CIFAR Loss': cifar_avg_loss,
+            'Train/Total Loss': (loss_num_domain_epoch + loss_ani_domain_epoch + label_avg_loss),
             'Train/MNIST Label Accuracy': mnist_acc_epoch,
             'Train/SVHN Label Accuracy': svhn_acc_epoch,
             'Train/CIFAR Label Accuracy': cifar_acc_epoch,
