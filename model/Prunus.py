@@ -193,6 +193,47 @@ class Prunus(nn.Module):
         return class_output_partitioned, class_output, domain_output, partition_idx
 
 
+
+    def pretrain_fwd(self, pindex_in, input_data, alpha=1.0):
+        feature = self.features(input_data)
+        feature = feature.view(feature.size(0), -1)
+
+        if self.feature_dim is None:
+            self._initialize_pre_classifier(feature.size(1))
+            self.to(input_data.device)
+        feature = self.pre_classifier(feature)
+
+        reverse_feature = ReverseLayerF.apply(feature, alpha)
+        domain_penul = self.discriminator(reverse_feature)
+        domain_output = self.discriminator_fc(domain_penul)
+
+        # # pass copied/detached domain_penul through partition_switcher
+        # partition_switcher_output = self.partition_switcher(domain_penul.clone().detach())
+        # partition_switcher_output = F.softmax(partition_switcher_output, dim=1)
+        # partition_switcher_output = torch.distributions.dirichlet.Dirichlet(partition_switcher_output).sample()
+        #
+        # # sample idx from partition_switcher_output
+        # partition_idx = torch.argmax(partition_switcher_output, dim=1)
+
+        partition_idx = torch.ones(domain_penul.size(0), dtype=torch.long, device=domain_penul.device) * pindex_in
+
+        # run the partitioned classifier
+        class_output = []
+
+        for b_i in range(feature.size(0)):
+            xx = feature[b_i].unsqueeze(0)
+            for layer in self.partitioned_classifier[partition_idx[b_i]]:
+                xx = layer(xx)
+            class_output.append(xx)
+
+        # class_output.append(self.partitioned_classifier[partition_idx[b_i]](feature[b_i].unsqueeze(0)))
+        if self.training:
+            self.sync_classifier_with_subnetworks()
+        class_output_partitioned = torch.cat(class_output, dim=0)
+        class_output = self.classifier(feature)
+
+        return class_output_partitioned, class_output, domain_output, partition_idx
+
 def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0):
 
     return [

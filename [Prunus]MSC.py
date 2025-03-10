@@ -81,8 +81,6 @@ def main():
 
         for mnist_data, svhn_data, cifar_data in zip(mnist_loader, svhn_loader, cifar_loader):
 
-            pre_opt.zero_grad()
-            
             lambda_p = 1.0
 
             # Training with source data
@@ -93,35 +91,36 @@ def main():
             cifar_images, cifar_labels = cifar_data
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
-            _, mnist_out, _, _ = model(mnist_images, alpha=lambda_p)
-            mnist_loss = criterion(mnist_out, mnist_labels)
-            
-            # mnist_loss.backward()
-            
-            _, svhn_out, _, _ = model(svhn_images, alpha=lambda_p)
-            svhn_loss = criterion(svhn_out, svhn_labels)
-            
-            # svhn_loss.backward()
-            
-            _, cifar_out, _, _ = model(cifar_images, alpha=lambda_p)
-            cifar_loss = criterion(cifar_out, cifar_labels)
-            
-            # cifar_loss.backward()
-            loss  = mnist_loss + svhn_loss + cifar_loss
-            loss.backward()
-            
-            pre_opt.step()
+            for pi in range(args.num_partition):
+                pre_opt.zero_grad()
 
-            mnist_acc = (torch.argmax(mnist_out, dim=1) == mnist_labels).sum().item() / mnist_labels.size(0)
-            svhn_acc = (torch.argmax(svhn_out, dim=1) == svhn_labels).sum().item() / svhn_labels.size(0)
-            cifar_acc = (torch.argmax(cifar_out, dim=1) == cifar_labels).sum().item() / cifar_labels.size(0)
+                _, mnist_out, _, _ = model.pretrain_fwd(mnist_images, pi, alpha=lambda_p)
+                mnist_loss = criterion(mnist_out, mnist_labels)
 
-            total_mnist_loss += mnist_loss.item()
-            total_svhn_loss += svhn_loss.item()
-            total_cifar_loss += cifar_loss.item()
-            total_mnist_acc += mnist_acc
-            total_svhn_acc += svhn_acc
-            total_cifar_acc += cifar_acc
+                # mnist_loss.backward()
+                _, svhn_out, _, _ = model.pretrain_fwd(svhn_images, pi, alpha=lambda_p)
+                svhn_loss = criterion(svhn_out, svhn_labels)
+
+                # svhn_loss.backward()
+                _, cifar_out, _, _ = model.pretrain_fwd(cifar_images, pi, alpha=lambda_p)
+                cifar_loss = criterion(cifar_out, cifar_labels)
+
+                # cifar_loss.backward()
+                loss  = mnist_loss + svhn_loss + cifar_loss
+                loss.backward()
+
+                pre_opt.step()
+
+                mnist_acc = (torch.argmax(mnist_out, dim=1) == mnist_labels).sum().item() / mnist_labels.size(0)
+                svhn_acc = (torch.argmax(svhn_out, dim=1) == svhn_labels).sum().item() / svhn_labels.size(0)
+                cifar_acc = (torch.argmax(cifar_out, dim=1) == cifar_labels).sum().item() / cifar_labels.size(0)
+
+                total_mnist_loss += mnist_loss.item()
+                total_svhn_loss += svhn_loss.item()
+                total_cifar_loss += cifar_loss.item()
+                total_mnist_acc += mnist_acc
+                total_svhn_acc += svhn_acc
+                total_cifar_acc += cifar_acc
             """
             print(f'Batches [{i + 1}/{min(len(mnist_loader), len(svhn_loader), len(cifar_loader))}] | '
                   f'MNIST Loss: {mnist_loss.item():.4f} | '
