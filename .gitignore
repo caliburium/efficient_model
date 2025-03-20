@@ -8,3 +8,4 @@
 .conda/
 dataloader/
 functions/
+model/
