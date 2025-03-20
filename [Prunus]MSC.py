@@ -94,13 +94,13 @@ def main():
             for pi in range(args.num_partition):
                 pre_opt.zero_grad()
 
-                _, mnist_out, _, _ = model.pretrain_fwd(pi, mnist_images, alpha=lambda_p)
-                _, svhn_out, _, _ = model.pretrain_fwd(pi,svhn_images, alpha=lambda_p)
-                _, cifar_out, _, _ = model.pretrain_fwd(pi, cifar_images, alpha=lambda_p)
+                mnist_out_partition, _, _, _ = model.pretrain_fwd(pi, mnist_images, alpha=lambda_p)
+                svhn_out_partition, _, _, _ = model.pretrain_fwd(pi,svhn_images, alpha=lambda_p)
+                cifar_out_partition, _, _, _ = model.pretrain_fwd(pi, cifar_images, alpha=lambda_p)
 
-                mnist_loss = criterion(mnist_out, mnist_labels)
-                svhn_loss = criterion(svhn_out, svhn_labels)
-                cifar_loss = criterion(cifar_out, cifar_labels)
+                mnist_loss = criterion(mnist_out_partition, mnist_labels)
+                svhn_loss = criterion(svhn_out_partition, svhn_labels)
+                cifar_loss = criterion(cifar_out_partition, cifar_labels)
 
                 loss  = mnist_loss + svhn_loss + cifar_loss
                 loss.backward()
