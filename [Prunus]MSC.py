@@ -43,7 +43,7 @@ def main():
 
     # Initialize Weights and Biases
     wandb.init(entity="hails",
-               project="Efficient Model",
+               project="Efficient Model dk",
                config=args.__dict__,
                name="[Prunus" + str(args.num_partition) + "]MSC_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
@@ -212,7 +212,6 @@ def main():
 
             total_samples += mnist_labels.size(0)
 
-            """
             print(f'Batches [{i + 1}/{min(len(mnist_loader), len(svhn_loader), len(cifar_loader))}] | '
                   f'MNIST Loss: {mnist_label_loss.item():.4f} | '
                   f'SVHN Loss: {svhn_label_loss.item():.4f} | '
@@ -225,7 +224,7 @@ def main():
                   f'MNIST Domain Acc: {mnist_domain_correct / mnist_dlabels.size(0) * 100:.3f}% | '
                   f'SVHN Domain Acc: {svhn_domain_correct / svhn_dlabels.size(0) * 100:.3f}% | '
                   f'CIFAR Domain Acc: {cifar_domain_correct / cifar_dlabels.size(0) * 100:.3f}%')
-            """
+            
         scheduler.step()
 
         mnist_partition_ratios = mnist_partition_counts / total_samples * 100
