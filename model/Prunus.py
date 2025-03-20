@@ -230,9 +230,9 @@ class Prunus(nn.Module):
         if self.training:
             self.sync_classifier_with_subnetworks()
         class_output_partitioned = torch.cat(class_output, dim=0)
-        class_output = self.classifier(feature)
+        # class_output = self.classifier(feature)
 
-        return class_output_partitioned, class_output, domain_output, partition_idx
+        return class_output_partitioned, [], domain_output, partition_idx
 
 def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0):
 

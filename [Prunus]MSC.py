@@ -102,7 +102,7 @@ def main():
                 svhn_loss = criterion(svhn_out_partition, svhn_labels)
                 cifar_loss = criterion(cifar_out_partition, cifar_labels)
 
-                loss  = mnist_loss + svhn_loss + cifar_loss
+                loss = mnist_loss + svhn_loss + cifar_loss
                 loss.backward()
 
                 pre_opt.step()
@@ -111,9 +111,9 @@ def main():
                 total_svhn_loss += svhn_loss.item()
                 total_cifar_loss += cifar_loss.item()
 
-                mnist_correct = (torch.argmax(mnist_out, dim=1) == mnist_labels).sum().item()
-                svhn_correct = (torch.argmax(svhn_out, dim=1) == svhn_labels).sum().item()
-                cifar_correct = (torch.argmax(cifar_out, dim=1) == cifar_labels).sum().item()
+                mnist_correct = (torch.argmax(mnist_out_partition, dim=1) == mnist_labels).sum().item()
+                svhn_correct = (torch.argmax(svhn_out_partition, dim=1) == svhn_labels).sum().item()
+                cifar_correct = (torch.argmax(cifar_out_partition, dim=1) == cifar_labels).sum().item()
 
                 total_mnist_correct += mnist_correct
                 total_svhn_correct += svhn_correct
