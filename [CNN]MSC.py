@@ -11,7 +11,8 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=200)
+    parser.add_argument('--epoch', type=int, default=2000)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.90)
@@ -21,7 +22,7 @@ def main():
     num_epochs = args.epoch
     # Initialize Weights and Biases
     wandb.init(entity="hails",
-               project="Efficient Model",
+               project="Efficient Model dk",
                config=args.__dict__,
                name="[CNN]MSC_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
@@ -33,8 +34,88 @@ def main():
     print("Data load complete, start training")
 
     model = SimpleCNN(num_classes=10).to(device)
+
+    pre_opt = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     criterion = nn.CrossEntropyLoss()
+
+    
+    # pretrain with using non-partitioned classifier
+    for epoch in range(args.pretrain_epoch):
+        model.train()
+        i = 0
+
+        total_mnist_loss, total_svhn_loss, total_cifar_loss = 0, 0, 0
+        total_mnist_correct, total_svhn_correct, total_cifar_correct = 0, 0, 0
+        total_samples = 0
+
+        for mnist_data, svhn_data, cifar_data in zip(mnist_loader, svhn_loader, cifar10_loader):
+
+            lambda_p = 0.0
+
+            # Training with source data
+            mnist_images, mnist_labels = mnist_data
+            mnist_images, mnist_labels = mnist_images.to(device), mnist_labels.to(device)
+            svhn_images, svhn_labels = svhn_data
+            svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
+            cifar_images, cifar_labels = cifar_data
+            cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
+
+            pre_opt.zero_grad()
+            mnist_outputs = model(mnist_images)
+            svhn_outputs = model(svhn_images)
+            cifar10_outputs = model(cifar_images)
+
+
+            mnist_loss = criterion(mnist_outputs, mnist_labels)
+            svhn_loss = criterion(svhn_outputs, svhn_labels)
+            cifar_loss = criterion(cifar10_outputs, cifar_labels)
+
+            loss = mnist_loss + svhn_loss + cifar_loss
+            loss.backward()
+
+            pre_opt.step()
+
+            total_mnist_loss += mnist_loss.item()
+            total_svhn_loss += svhn_loss.item()
+            total_cifar_loss += cifar_loss.item()
+
+            mnist_correct = (torch.argmax(mnist_outputs, dim=1) == mnist_labels).sum().item()
+            svhn_correct = (torch.argmax(svhn_outputs, dim=1) == svhn_labels).sum().item()
+            cifar_correct = (torch.argmax(cifar10_outputs, dim=1) == cifar_labels).sum().item()
+
+            total_mnist_correct += mnist_correct
+            total_svhn_correct += svhn_correct
+            total_cifar_correct += cifar_correct
+
+            total_samples += mnist_labels.size(0)
+
+            # print current pretrain_epoch and batch's statistics
+            print(f'PreTrain_Batches [{i + 1}/{min(len(mnist_loader), len(svhn_loader), len(cifar10_loader))}] | '
+                    f'MNIST Loss: {mnist_loss.item():.4f} | '
+                    f'SVHN Loss: {svhn_loss.item():.4f} | '
+                    f'CIFAR Loss: {cifar_loss.item():.4f} | '
+                    f'MNIST Acc: {mnist_correct / mnist_labels.size(0) * 100:.3f}% | '
+                    f'SVHN Acc: {svhn_correct / svhn_labels.size(0) * 100:.3f}% | '
+                    f'CIFAR Acc: {cifar_correct / cifar_labels.size(0) * 100:.3f}%')
+
+            i += 1
+
+        logs = {
+            'PreTrain/MNIST Accuracy': f"{(total_mnist_correct / total_samples) * 100:.4f}",
+            'PreTrain/SVHN Accuracy': f"{(total_svhn_correct / total_samples) * 100:.4f}",
+            'PreTrain/CIFAR Accuracy': f"{(total_cifar_correct / total_samples) * 100:.4f}",
+            'PreTrain/MNIST Loss': f"{total_mnist_loss / total_samples:.6f}",
+            'PreTrain/SVHN Loss': f"{total_svhn_loss / total_samples:.6f}",
+            'PreTrain/CIFAR Loss': f"{total_cifar_loss / total_samples:.6f}",
+        }
+
+        print(f"Epoch {epoch + 1} logs:", logs)
+        # wandb.log(logs, step=epoch + 1)
+
+    print("Pretraining done")
+
 
     for epoch in range(num_epochs):
         model.train()

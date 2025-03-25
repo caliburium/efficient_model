@@ -16,12 +16,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=2000)
-    parser.add_argument('--pretrain_epoch', type=int, default=3)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--feature_extractor', type=str, default='SimpleCNN')
     parser.add_argument('--pretrained', action='store_true', default=False)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
+    parser.add_argument('--num_domains', type=int, default=3)
     parser.add_argument('--pre_classifier_out', type=int, default=1024)
     parser.add_argument('--part_layer', type=int, default=384)
 
@@ -60,6 +61,7 @@ def main():
                    pre_classifier_out=args.pre_classifier_out,
                    n_partition=args.num_partition,
                    part_layer=args.part_layer,
+                   num_domains=args.num_domains,
                    device=device
                    )
 
@@ -121,6 +123,15 @@ def main():
 
                 total_samples += mnist_labels.size(0)
 
+                # print current pretrain_epoch and batch's statistics
+                print(f'PreTrain_Batches [{i + 1}/{min(len(mnist_loader), len(svhn_loader), len(cifar_loader))}] | '
+                      f'MNIST Loss: {mnist_loss.item():.4f} | '
+                      f'SVHN Loss: {svhn_loss.item():.4f} | '
+                      f'CIFAR Loss: {cifar_loss.item():.4f} | '
+                      f'MNIST Acc: {mnist_correct / mnist_labels.size(0) * 100:.3f}% | '
+                      f'SVHN Acc: {svhn_correct / svhn_labels.size(0) * 100:.3f}% | '
+                      f'CIFAR Acc: {cifar_correct / cifar_labels.size(0) * 100:.3f}%')
+
             i += 1
 
         logs = {
@@ -149,7 +160,7 @@ def main():
         svhn_partition_counts = torch.zeros(args.num_partition, device=device)
         cifar_partition_counts = torch.zeros(args.num_partition, device=device)
         total_samples = 0
-
+        parameter_importance = {name: torch.zeros_like(param) for name, param in model.named_parameters()}
         for i, (mnist_data, svhn_data, cifar_data) in enumerate(zip(mnist_loader, svhn_loader, cifar_loader)):
             #p = (float(i + epoch * min(len(mnist_loader), len(svhn_loader), len(cifar_loader))) /
             #     num_epochs / min(len(mnist_loader), len(svhn_loader), len(cifar_loader)))
@@ -167,8 +178,8 @@ def main():
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
             mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
-            svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
-            cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
+            svhn_dlabels = torch.full((svhn_images.size(0),), 1, dtype=torch.long, device=device)
+            cifar_dlabels = torch.full((cifar_images.size(0),), 2, dtype=torch.long, device=device)
 
             mnist_out_part, _, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
             svhn_out_part, _, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
@@ -182,21 +193,28 @@ def main():
             mnist_label_loss = criterion(mnist_out_part, mnist_labels)
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
             cifar_label_loss = criterion(cifar_out_part, cifar_labels)
+
             label_loss = mnist_label_loss + svhn_label_loss + cifar_label_loss
+
 
             mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
             svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
             cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
-            domain_num_loss = mnist_domain_loss + svhn_domain_loss
-            domain_ani_loss = cifar_domain_loss
+
+            domain_num_loss = mnist_domain_loss + svhn_domain_loss + cifar_domain_loss
 
             loss_label_epoch += label_loss.item()
             loss_num_domain_epoch += domain_num_loss.item()
-            loss_ani_domain_epoch += domain_ani_loss.item()
 
-            loss = domain_num_loss + domain_ani_loss + label_loss
-            loss.backward()
-            optimizer.step()
+            loss = domain_num_loss + label_loss
+            loss.backward() # 
+
+            # Accumulate importance (gradient magnitude)
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    parameter_importance[name] += param.grad.abs()
+
+            optimizer.step() # next(model.classifier.named_parameters())[1].grad
 
             total_mnist_loss += mnist_label_loss.item()
             total_svhn_loss += svhn_label_loss.item()
@@ -216,14 +234,13 @@ def main():
                   f'MNIST Loss: {mnist_label_loss.item():.4f} | '
                   f'SVHN Loss: {svhn_label_loss.item():.4f} | '
                   f'CIFAR Loss: {cifar_label_loss.item():.4f} | '
-                  f'Label Loss: {label_loss.item():.4f}')
-
-            print(f'MNIST Acc: {mnist_correct / mnist_labels.size(0) * 100:.3f}% | '
-                  f'SVHN Acc: {svhn_correct / svhn_labels.size(0) * 100:.3f}% | '
-                  f'CIFAR Acc: {cifar_correct / cifar_labels.size(0) * 100:.3f}% | '
-                  f'MNIST Domain Acc: {mnist_domain_correct / mnist_dlabels.size(0) * 100:.3f}% | '
-                  f'SVHN Domain Acc: {svhn_domain_correct / svhn_dlabels.size(0) * 100:.3f}% | '
-                  f'CIFAR Domain Acc: {cifar_domain_correct / cifar_dlabels.size(0) * 100:.3f}%')
+                  f'Label Loss: {label_loss.item():.4f} | '
+                  f'MNIST Acc: {(torch.argmax(mnist_out_part, dim=1) == mnist_labels).sum().item() / mnist_labels.size(0) * 100:.3f}% | '
+                  f'SVHN Acc: {(torch.argmax(svhn_out_part, dim=1) == svhn_labels).sum().item() / svhn_labels.size(0) * 100:.3f}% | '
+                  f'CIFAR Acc: {(torch.argmax(cifar_out_part, dim=1) == cifar_labels).sum().item() / cifar_labels.size(0) * 100:.3f}%')
+            #       f'MNIST Domain Acc: {mnist_domain_correct / mnist_dlabels.size(0) * 100:.3f}% | '
+            #       f'SVHN Domain Acc: {svhn_domain_correct / svhn_dlabels.size(0) * 100:.3f}% | '
+            #       f'CIFAR Domain Acc: {cifar_domain_correct / cifar_dlabels.size(0) * 100:.3f}%')
             
         scheduler.step()
 

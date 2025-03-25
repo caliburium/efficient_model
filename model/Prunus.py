@@ -8,7 +8,7 @@ from functions.ReverseLayerF import ReverseLayerF
 
 class Prunus(nn.Module):
     def __init__(self, feature_extractor='SimpleCNN', pretrained=True, num_classes = 10,
-                 pre_classifier_out = 1024, n_partition = 2, part_layer = 384,
+                 pre_classifier_out = 1024, n_partition = 2, part_layer = 384, num_domains = 2,
                  device='cuda' if torch.cuda.is_available() else 'cpu'):
         super(Prunus, self).__init__()
         self.restored = False
@@ -45,7 +45,7 @@ class Prunus(nn.Module):
             nn.BatchNorm1d(part_layer),
             nn.ReLU(inplace=True),
         )
-        self.discriminator_fc = nn.Linear(part_layer, 2)
+        self.discriminator_fc = nn.Linear(part_layer, num_domains)
 
         self.partition_switcher = nn.Sequential(
             nn.Linear(part_layer, self.n_partition),
@@ -155,6 +155,11 @@ class Prunus(nn.Module):
         # print('')
 
     def forward(self, input_data, alpha=1.0):
+        
+        def gumbel_softmax(logits, temperature=1.0):
+            gumbel_dist = torch.distributions.Gumbel(torch.tensor(0.), torch.tensor(1.))
+            gumbel_noise = gumbel_dist.sample(logits.shape).to(logits.device)
+            return F.softmax((logits + gumbel_noise) / temperature, dim=1)
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
 
@@ -170,10 +175,15 @@ class Prunus(nn.Module):
         # pass copied/detached domain_penul through partition_switcher
         partition_switcher_output = self.partition_switcher(domain_penul.clone().detach())
         partition_switcher_output = F.softmax(partition_switcher_output, dim=1)
-        partition_switcher_output = torch.distributions.dirichlet.Dirichlet(partition_switcher_output).sample()
+        # partition_switcher_output = torch.distributions.dirichlet.Dirichlet(partition_switcher_output).sample()
+        
+        # Use Gumbel-Softmax for differentiable categorical sampling
+        gumbel_output = gumbel_softmax(partition_switcher_output, temperature=0.1)
+        partition_idx = torch.argmax(gumbel_output, dim=1)
 
-        # sample idx from partition_switcher_output
-        partition_idx = torch.argmax(partition_switcher_output, dim=1)
+
+        # # sample idx from partition_switcher_output
+        # partition_idx = torch.argmax(partition_switcher_output, dim=1)
 
         # run the partitioned classifier
         class_output = []
