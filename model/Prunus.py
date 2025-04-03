@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+
+from functions.GradientReversal import GradientReversal
 from model.SimpleCNN import SimpleCNN
-from functions.ReverseLayerF import ReverseLayerF
 
 
 class Prunus(nn.Module):
@@ -143,7 +144,8 @@ class Prunus(nn.Module):
             self.to(input_data.device)
         feature = self.pre_classifier(feature)
 
-        reverse_feature = ReverseLayerF.apply(feature, alpha)
+        grl = GradientReversal(lambd=alpha)
+        reverse_feature = grl(feature)
         domain_penul = self.discriminator(reverse_feature)
         domain_output = self.discriminator_fc(domain_penul)
 
@@ -155,23 +157,23 @@ class Prunus(nn.Module):
         partition_idx = torch.argmax(gumbel_output, dim=1)
         class_output = []
 
-        # for b_i in range(feature.size(0)):
-        #     xx_list = []
-        #     for p_i in range(self.n_partition):
-        #         xx = feature[b_i].unsqueeze(0)
-        #         for layer in self.partitioned_classifier[p_i]:
-        #             xx = layer(xx)
-        #         xx_list.append(xx)
-        #
-        #     stacked = torch.stack(xx_list, dim=0)  # [n_partition, 1, num_classes]
-        #     weighted = torch.sum(gumbel_output[b_i].view(-1, 1, 1) * stacked, dim=0)
-        #     class_output.append(weighted)
-
         for b_i in range(feature.size(0)):
-            xx = feature[b_i].unsqueeze(0)
-            for layer in self.partitioned_classifier[partition_idx[b_i]]:
-                xx = layer(xx)
-            class_output.append(xx)
+            xx_list = []
+            for p_i in range(self.n_partition):
+                xx = feature[b_i].unsqueeze(0)
+                for layer in self.partitioned_classifier[p_i]:
+                    xx = layer(xx)
+                xx_list.append(xx)
+
+            stacked = torch.stack(xx_list, dim=0)  # [n_partition, 1, num_classes]
+            weighted = torch.sum(gumbel_output[b_i].view(-1, 1, 1) * stacked, dim=0)
+            class_output.append(weighted)
+
+        # for b_i in range(feature.size(0)):
+        #     xx = feature[b_i].unsqueeze(0)
+        #     for layer in self.partitioned_classifier[partition_idx[b_i]]:
+        #         xx = layer(xx)
+        #     class_output.append(xx)
 
         if self.training:
             self.sync_classifier_with_subnetworks()
@@ -189,7 +191,8 @@ class Prunus(nn.Module):
             self.to(input_data.device)
         feature = self.pre_classifier(feature)
 
-        reverse_feature = ReverseLayerF.apply(feature, alpha)
+        grl = GradientReversal(lambd=alpha)
+        reverse_feature = grl(feature)
         domain_penul = self.discriminator(reverse_feature)
         domain_output = self.discriminator_fc(domain_penul)
 

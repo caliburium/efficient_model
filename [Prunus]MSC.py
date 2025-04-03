@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--pre_weight', type=float, default=1.0)
     parser.add_argument('--fc_weight', type=float, default=1.0)
     parser.add_argument('--disc_weight', type=float, default=10.0)
-    parser.add_argument('--switcher_weight', type=float, default=10.0)
+    parser.add_argument('--switcher_weight', type=float, default=2.0)
 
     args = parser.parse_args()
 
