@@ -18,8 +18,6 @@ def main():
     parser.add_argument('--epoch', type=int, default=200)
     parser.add_argument('--pretrain_epoch', type=int, default=5)
     parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--feature_extractor', type=str, default='SimpleCNN')
-    parser.add_argument('--pretrained', action='store_true', default=False)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
     parser.add_argument('--pre_classifier_out', type=int, default=1024)
@@ -56,9 +54,7 @@ def main():
 
     print("Data load complete, start training")
 
-    model = Prunus(feature_extractor=args.feature_extractor,
-                   pretrained=args.pretrained,
-                   num_classes=args.num_classes,
+    model = Prunus(num_classes=args.num_classes,
                    pre_classifier_out=args.pre_classifier_out,
                    n_partition=args.num_partition,
                    part_layer=args.part_layer,
