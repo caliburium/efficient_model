@@ -1,47 +1,49 @@
+import torch
 import torch.nn as nn
 from functions.ReverseLayerF import ReverseLayerF
 
 
 class DANN(nn.Module):
-    def __init__(self):
+    def __init__(self, hidden_size=256):
         super(DANN, self).__init__()
-        self.restored = False
 
-        self.feature = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=5),  # 28
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=2),  # 13
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=5),  # 9
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
+
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=2),  # 4
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4),  # 1
-            nn.ReLU()
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
+
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            # nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         )
 
         self.classifier = nn.Sequential(
             nn.Linear(128 * 1 * 1, 1024),
             nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 10)
+            nn.ReLU(),
+            nn.Linear(1024, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 10)
         )
 
         self.discriminator = nn.Sequential(
             nn.Linear(128 * 1 * 1, 1024),
             nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 2)
+            nn.ReLU(),
+            nn.Linear(1024, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 2)
         )
 
-    def forward(self, input_data, alpha=1.0):
-        input_data = input_data.expand(input_data.data.shape[0], 3, 32, 32)
-        feature = self.feature(input_data)
-        feature = feature.view(-1, 128 * 1 * 1)
+    def forward(self, x, alpha=1.0):
+        feature = self.features(x)
+        feature = torch.flatten(feature, 1)
         reverse_feature = ReverseLayerF.apply(feature, alpha)
         class_output = self.classifier(feature)
         domain_output = self.discriminator(reverse_feature)
