@@ -9,6 +9,7 @@ class Prunus(nn.Module):
                  device='cuda' if torch.cuda.is_available() else 'cpu'):
         super(Prunus, self).__init__()
         self.device = device
+        self.n_partition = n_partition
 
         self.features = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
@@ -116,10 +117,6 @@ class Prunus(nn.Module):
     def forward(self, input_data, alpha=1.0):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
-
-        if self.feature_dim is None:
-            self._initialize_pre_classifier(feature.size(1))
-            self.to(input_data.device)
         feature = self.pre_classifier(feature)
 
         reverse_feature = ReverseLayerF.apply(feature, alpha)
@@ -154,9 +151,6 @@ class Prunus(nn.Module):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
 
-        if self.feature_dim is None:
-            self._initialize_pre_classifier(feature.size(1))
-            self.to(input_data.device)
         feature = self.pre_classifier(feature)
         reverse_feature = ReverseLayerF.apply(feature, alpha)
         domain_penul = self.discriminator(reverse_feature)

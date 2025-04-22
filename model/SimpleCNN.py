@@ -91,12 +91,12 @@ class SimpleCNN(nn.Module):
 
             nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+            # nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         )
 
         # Classifier
         self.classifier = nn.Sequential(
-            nn.Linear(128 * 4 * 4, 1024),
+            nn.Linear(128 * 8 * 8, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
             nn.Linear(1024, 384),

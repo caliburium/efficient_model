@@ -58,7 +58,7 @@ def main():
             mnist_loss = criterion(mnist_outputs, mnist_labels)
             svhn_loss = criterion(svhn_outputs, svhn_labels)
             cifar10_loss = criterion(cifar10_outputs, cifar10_labels)
-            loss = mnist_loss + svhn_loss + cifar10_loss
+            loss = (mnist_loss + svhn_loss) * 0.5 + cifar10_loss
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -109,9 +109,9 @@ def main():
 
         wandb.log({
             'Train/Label Loss': total_avg_loss,
-            'Train/MNIST Loss': mnist_avg_loss,
-            'Train/SVHN Loss': svhn_avg_loss,
-            'Train/CIFAR Loss': cifar10_avg_loss,
+            'Train/MNIST Label Loss': mnist_avg_loss,
+            'Train/SVHN Label Loss': svhn_avg_loss,
+            'Train/CIFAR Label Loss': cifar10_avg_loss,
             'Train/MNIST Label Accuracy': mnist_acc_epoch,
             'Train/SVHN Label Accuracy': svhn_acc_epoch,
             'Train/CIFAR Label Accuracy': cifar10_acc_epoch,
@@ -125,25 +125,17 @@ def main():
                 images, labels = images.to(device), labels.to(device)
 
                 class_output = model(images)
-                preds = torch.softmax(class_output, dim=1)
-
-                _, predicted = torch.max(preds.data, 1)
                 total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+                correct += (torch.argmax(class_output, dim=1) == labels).sum().item()
 
             accuracy = correct / total * 100
-
-            log_data = {
-                f'Test/Label {group} Accuracy': accuracy,
-            }
-            wandb.log(log_data, step=epoch)
+            wandb.log({f'Test/Label {group} Accuracy': accuracy}, step=epoch)
             print(f'Test {group} | Label Acc: {accuracy:.3f}%')
 
         with torch.no_grad():
             tester(mnist_loader_test, 'MNIST')
             tester(svhn_loader_test, 'SVHN')
             tester(cifar10_loader_test, 'CIFAR')
-
 
 if __name__ == '__main__':
     main()
