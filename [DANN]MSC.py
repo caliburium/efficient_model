@@ -7,7 +7,7 @@ from torch.amp import autocast, GradScaler
 from functions.lr_lambda import lr_lambda
 import wandb
 from dataloader.data_loader import data_loader
-from model.DANN import DANN
+from model.DANN import DANN, dann_weights
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -20,6 +20,10 @@ def main():
     parser.add_argument('--hidden_size', type=int, default=256)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
+    parser.add_argument('--feature_weight', type=float, default=1.0)
+    parser.add_argument('--fc_weight', type=float, default=1.0)
+    parser.add_argument('--disc_weight', type=float, default=5.0)
+
     args = parser.parse_args()
 
     num_epochs = args.epoch
@@ -37,7 +41,8 @@ def main():
     print("Data load complete, start training")
 
     model = DANN(hidden_size=args.hidden_size).to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    param = dann_weights(model, args.lr, args.feature_weight, args.fc_weight, args.disc_weight)
+    optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
     scaler = GradScaler("cuda")

@@ -48,3 +48,11 @@ class DANN(nn.Module):
         class_output = self.classifier(feature)
         domain_output = self.discriminator(reverse_feature)
         return class_output, domain_output
+
+def dann_weights(model, lr, feature_weight=1.0, fc_weight=1.0, disc_weight=1.0, switcher_weight=1.0):
+
+    return [
+        {'params': model.features.parameters(), 'lr': lr * feature_weight},
+        {'params': model.classifier.parameters(), 'lr': lr * fc_weight},
+        {'params': model.discriminator.parameters(), 'lr': lr * disc_weight},
+    ]
