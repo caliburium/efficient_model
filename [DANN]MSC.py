@@ -129,7 +129,7 @@ def main():
         print(f'Epoch [{epoch + 1}/{num_epochs}] | '
               f'Label Loss: {label_avg_loss:.4f} | '
               f'Domain Loss: {domain_avg_loss:.4f} | '
-              f'Total Loss: {label_avg_loss + total_domain_loss:.4f} | '
+              f'Total Loss: {label_avg_loss + domain_avg_loss:.4f} | '
         )
         print(f'MNIST Loss: {mnist_avg_loss:.4f} | '
               f'SVHN Loss: {svhn_avg_loss:.4f} | '
