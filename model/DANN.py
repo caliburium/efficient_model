@@ -22,7 +22,7 @@ class DANN(nn.Module):
         )
 
         self.classifier = nn.Sequential(
-            nn.Linear(128 * 1 * 1, 1024),
+            nn.Linear(128 * 8 * 8, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(),
             nn.Linear(1024, hidden_size),
@@ -32,7 +32,7 @@ class DANN(nn.Module):
         )
 
         self.discriminator = nn.Sequential(
-            nn.Linear(128 * 1 * 1, 1024),
+            nn.Linear(128 * 8 * 8, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(),
             nn.Linear(1024, hidden_size),

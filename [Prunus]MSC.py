@@ -249,9 +249,9 @@ def main():
               f'MNIST Ratios {mnist_partition_ratio_str} | '
               f'SVHN Ratios {svhn_partition_ratio_str} | '
               f'CIFAR Ratios {cifar_partition_ratio_str} | '
-              f'Label Loss: {total_label_loss:.4f} | '
+              f'Label Loss: {label_avg_loss:.4f} | '
               f'Domain Loss: {domain_avg_loss:.4f} | '
-              f'Total Loss: {total_label_loss + total_domain_loss:.4f} | '
+              f'Total Loss: {label_avg_loss + domain_avg_loss:.4f} | '
               f'Time: {end_time - start_time:.2f} sec | '
         )
         print(f'MNIST Loss: {mnist_avg_loss:.4f} | '
