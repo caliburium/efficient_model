@@ -6,14 +6,15 @@ import wandb
 from dataloader.data_loader import data_loader
 from model.SimpleCNN import SimpleCNN
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=200)
+    parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--hidden_size', type=int, default=256)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     args = parser.parse_args()
@@ -23,7 +24,7 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model",
                config=args.__dict__,
-               name="[CNN]MSC_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CNN]MSC_" + str(args.hidden_size) + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -32,7 +33,7 @@ def main():
 
     print("Data load complete, start training")
 
-    model = SimpleCNN(num_classes=10).to(device)
+    model = SimpleCNN(num_classes=10, hidden_size=args.hidden_size).to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     criterion = nn.CrossEntropyLoss()
 

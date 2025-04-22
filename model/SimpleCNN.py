@@ -76,7 +76,7 @@ class CNN228(nn.Module):
 
 
 class SimpleCNN(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, hidden_size=256):
         super(SimpleCNN, self).__init__()
 
         # Feature Extractor
@@ -99,10 +99,10 @@ class SimpleCNN(nn.Module):
             nn.Linear(128 * 8 * 8, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
-            nn.Linear(1024, 384),
-            nn.BatchNorm1d(384),
+            nn.Linear(1024, hidden_size),
+            nn.BatchNorm1d(hidden_size),
             nn.ReLU(inplace=True),
-            nn.Linear(384, num_classes)
+            nn.Linear(hidden_size, num_classes)
         )
 
     def forward(self, x):
