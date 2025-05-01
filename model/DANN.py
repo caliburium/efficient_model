@@ -49,6 +49,12 @@ class DANN(nn.Module):
         domain_output = self.discriminator(reverse_feature)
         return class_output, domain_output
 
+    def cnn(self, x):
+        feature = self.features(x)
+        feature = torch.flatten(feature, 1)
+        out = self.classifier(feature)
+        return out
+
 def dann_weights(model, lr, feature_weight=1.0, fc_weight=1.0, disc_weight=1.0, switcher_weight=1.0):
 
     return [
