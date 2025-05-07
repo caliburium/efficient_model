@@ -2,7 +2,6 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.amp import autocast, GradScaler
 from functions.lr_lambda import lr_lambda
 from model.Prunus import Prunus, prunus_weights
 from dataloader.data_loader import data_loader
@@ -24,7 +23,7 @@ def main():
     parser.add_argument('--part_layer', type=int, default=384)
 
     # Optimizer
-    parser.add_argument('--lr', type=float, default=0.05)
+    parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
 
@@ -46,7 +45,7 @@ def main():
                name="[Prunus" + str(args.num_partition)
                     + "]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
-                    + "_noscheduler"
+                    + "_AMP_Disabled"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -66,18 +65,15 @@ def main():
 
     param = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
     optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
-    scaler = GradScaler("cuda")
 
     for epoch in range(pre_epochs):
         model.train()
         i = 0
 
-        total_mnist_p0_loss, total_svhn_p0_loss, total_cifar_p0_loss = 0, 0, 0
-        total_mnist_p1_loss, total_svhn_p1_loss, total_cifar_p1_loss = 0, 0, 0
-        total_mnist_p0_correct, total_svhn_p0_correct, total_cifar_p0_correct = 0, 0, 0
-        total_mnist_p1_correct, total_svhn_p1_correct, total_cifar_p1_correct = 0, 0, 0
+        total_mnist_loss, total_svhn_loss, total_cifar_loss = 0, 0, 0
+        total_mnist_correct, total_svhn_correct, total_cifar_correct = 0, 0, 0
         total_samples = 0
 
         for mnist_data, svhn_data, cifar_data in zip(mnist_loader, svhn_loader, cifar_loader):
@@ -93,76 +89,48 @@ def main():
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
             pre_opt.zero_grad()
-            with (autocast(device_type='cuda')):
-                mnist_out_partition0, _, mnist_switcher0 = model.pretrain_fwd(0, mnist_images, alpha=lambda_p)
-                svhn_out_partition0, _, svhn_switcher0 = model.pretrain_fwd(0, svhn_images, alpha=lambda_p)
-                cifar_out_partition0, _, cifar_switcher0 = model.pretrain_fwd(0, cifar_images, alpha=lambda_p)
-                mnist_out_partition1, _, mnist_switcher1 = model.pretrain_fwd(1, mnist_images, alpha=lambda_p)
-                svhn_out_partition1, _, svhn_switcher1 = model.pretrain_fwd(1, svhn_images, alpha=lambda_p)
-                cifar_out_partition1, _, cifar_switcher1 = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
 
-                mnist_p0_loss = criterion(mnist_out_partition0, mnist_labels)
-                svhn_p0_loss = criterion(svhn_out_partition0, svhn_labels)
-                cifar_p0_loss = criterion(cifar_out_partition0, cifar_labels)
-                mnist_p1_loss = criterion(mnist_out_partition1, mnist_labels)
-                svhn_p1_loss = criterion(svhn_out_partition1, svhn_labels)
-                cifar_p1_loss = criterion(cifar_out_partition1, cifar_labels)
+            mnist_out_partition, _, mnist_switcher = model.pretrain_fwd(0, mnist_images, alpha=lambda_p)
+            svhn_out_partition, _, svhn_switcher = model.pretrain_fwd(0, svhn_images, alpha=lambda_p)
+            cifar_out_partition, _, cifar_switcher = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
 
-                loss = mnist_p0_loss + svhn_p0_loss + cifar_p0_loss.neg() + mnist_p1_loss.neg() + svhn_p1_loss.neg() + cifar_p1_loss
+            mnist_loss = criterion(mnist_out_partition, mnist_labels)
+            svhn_loss = criterion(svhn_out_partition, svhn_labels)
+            cifar_loss = criterion(cifar_out_partition, cifar_labels)
 
-            scaler.scale(loss).backward()
-            scaler.step(pre_opt)
-            scaler.update()
+            loss = mnist_loss + svhn_loss + cifar_loss
 
+            loss.backward()
             pre_opt.step()
 
-            total_mnist_p0_loss += mnist_p0_loss.item()
-            total_svhn_p0_loss += svhn_p0_loss.item()
-            total_cifar_p0_loss += cifar_p0_loss.item()
-            total_mnist_p1_loss += mnist_p1_loss.item()
-            total_svhn_p1_loss += svhn_p1_loss.item()
-            total_cifar_p1_loss += cifar_p0_loss.item()
+            total_mnist_loss += mnist_loss.item()
+            total_svhn_loss += svhn_loss.item()
+            total_cifar_loss += cifar_loss.item()
 
-            mnist_p0_correct = (torch.argmax(mnist_out_partition0, dim=1) == mnist_labels).sum().item()
-            svhn_p0_correct = (torch.argmax(svhn_out_partition0, dim=1) == svhn_labels).sum().item()
-            cifar_p0_correct = (torch.argmax(cifar_out_partition0, dim=1) == cifar_labels).sum().item()
-            mnist_p1_correct = (torch.argmax(mnist_out_partition1, dim=1) == mnist_labels).sum().item()
-            svhn_p1_correct = (torch.argmax(svhn_out_partition1, dim=1) == svhn_labels).sum().item()
-            cifar_p1_correct = (torch.argmax(cifar_out_partition1, dim=1) == cifar_labels).sum().item()
+            mnist_correct = (torch.argmax(mnist_out_partition, dim=1) == mnist_labels).sum().item()
+            svhn_correct = (torch.argmax(svhn_out_partition, dim=1) == svhn_labels).sum().item()
+            cifar_correct = (torch.argmax(cifar_out_partition, dim=1) == cifar_labels).sum().item()
 
-            total_mnist_p0_correct += mnist_p0_correct
-            total_svhn_p0_correct += svhn_p0_correct
-            total_cifar_p0_correct += cifar_p0_correct
-            total_mnist_p1_correct += mnist_p1_correct
-            total_svhn_p1_correct += svhn_p1_correct
-            total_cifar_p1_correct += cifar_p1_correct
+            total_mnist_correct += mnist_correct
+            total_svhn_correct += svhn_correct
+            total_cifar_correct += cifar_correct
 
             total_samples += mnist_labels.size(0)
 
             i += 1
 
-        mnist_p0_acc_epoch = (total_mnist_p0_correct / total_samples) * 100
-        svhn_p0_acc_epoch = (total_svhn_p0_correct / total_samples) * 100
-        cifar_p0_acc_epoch = (total_cifar_p0_correct / total_samples) * 100
-        mnist_p1_acc_epoch = (total_mnist_p1_correct / total_samples) * 100
-        svhn_p1_acc_epoch = (total_svhn_p1_correct / total_samples) * 100
-        cifar_p1_acc_epoch = (total_cifar_p1_correct / total_samples) * 100
+        mnist_acc_epoch = (total_mnist_correct / total_samples) * 100
+        svhn_acc_epoch = (total_svhn_correct / total_samples) * 100
+        cifar_acc_epoch = (total_cifar_correct / total_samples) * 100
 
-        mnist_p0_loss_epoch = total_mnist_p0_loss / total_samples
-        svhn_p0_loss_epoch = total_svhn_p0_loss / total_samples
-        cifar_p0_loss_epoch = total_cifar_p0_loss / total_samples
-        mnist_p1_loss_epoch = total_mnist_p1_loss / total_samples
-        svhn_p1_loss_epoch = total_svhn_p1_loss / total_samples
-        cifar_p1_loss_epoch = total_cifar_p1_loss / total_samples
+        mnist_loss_epoch = total_mnist_loss / total_samples
+        svhn_loss_epoch = total_svhn_loss / total_samples
+        cifar_loss_epoch = total_cifar_loss / total_samples
 
         print(f"Pre Epoch {epoch + 1} | "
-              f"MNIST P0 Acc: {mnist_p0_acc_epoch:.2f}%, Loss: {mnist_p0_loss_epoch:.6f} | "
-              f"SVHN P0 Acc: {svhn_p0_acc_epoch:.2f}%, Loss: {svhn_p0_loss_epoch:.6f} | "
-              f"CIFAR P0 Acc: {cifar_p0_acc_epoch:.2f}%, Loss: {cifar_p0_loss_epoch:.6f}"
-              f"MNIST P0 Acc: {mnist_p1_acc_epoch:.2f}%, Loss: {mnist_p1_loss_epoch:.6f} | "
-              f"SVHN P0 Acc: {svhn_p1_acc_epoch:.2f}%, Loss: {svhn_p1_loss_epoch:.6f} | "
-              f"CIFAR P0 Acc: {cifar_p1_acc_epoch:.2f}%, Loss: {cifar_p1_loss_epoch:.6f}"
-              )
+              f"MNIST Acc: {mnist_acc_epoch:.2f}%, Loss: {mnist_loss_epoch:.6f} | "
+              f"SVHN Acc: {svhn_acc_epoch:.2f}%, Loss: {svhn_loss_epoch:.6f} | "
+              f"CIFAR Acc: {cifar_acc_epoch:.2f}%, Loss: {cifar_loss_epoch:.6f}")
 
     print("Pretraining done")
 
@@ -195,26 +163,25 @@ def main():
             cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
-            with autocast(device_type='cuda'):
-                mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
-                svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
-                cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p)
 
-                mnist_label_loss = criterion(mnist_out_part, mnist_labels)
-                svhn_label_loss = criterion(svhn_out_part, svhn_labels)
-                cifar_label_loss = criterion(cifar_out_part, cifar_labels)
-                label_loss = (mnist_label_loss + svhn_label_loss) * 0.5 + cifar_label_loss
+            mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
+            svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
+            cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p)
 
-                mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
-                svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
-                cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
-                domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
+            mnist_label_loss = criterion(mnist_out_part, mnist_labels)
+            svhn_label_loss = criterion(svhn_out_part, svhn_labels)
+            cifar_label_loss = criterion(cifar_out_part, cifar_labels)
+            label_loss = (mnist_label_loss + svhn_label_loss) * 0.5 + cifar_label_loss
 
-                loss = label_loss + domain_loss
+            mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
+            svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
+            cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
+            domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss = label_loss + domain_loss
+
+            loss.backward()
+            optimizer.step()
 
             # count partition ratio
             mnist_partition_counts += torch.bincount(mnist_part_idx, minlength=args.num_partition).to(device)
@@ -241,7 +208,7 @@ def main():
 
             total_samples += mnist_labels.size(0)
 
-        # scheduler.step()
+        scheduler.step()
 
         mnist_partition_ratios = mnist_partition_counts / total_samples * 100
         svhn_partition_ratios = svhn_partition_counts / total_samples * 100
