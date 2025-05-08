@@ -15,7 +15,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=100)
+    parser.add_argument('--epoch', type=int, default=500)
     parser.add_argument('--pretrain_epoch', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--num_partition', type=int, default=2)
@@ -62,8 +62,7 @@ def main():
 
     param1 = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
     pre_opt = optim.SGD(param1, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    param2 = prunus_weights(model, args.lr, 0, 0, 0, args.switcher_weight)
-    optimizer = optim.SGD(param2, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
