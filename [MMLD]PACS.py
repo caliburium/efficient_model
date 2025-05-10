@@ -12,13 +12,13 @@ from dataloader.pacs_loader import pacs_loader
 from functions.nmi import normalized_mutual_info
 from model.AlexNet import DANN_Alex, get_model_parts_with_weights
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 # https://github.com/mil-tokyo/dg_mmld/tree/master
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=200)
-    parser.add_argument('--batch_size', type=int, default=200)
+    parser.add_argument('--batch_size', type=int, default=128)
 
     # Dataset Settings
     parser.add_argument('--color_jitter', action='store_false')
@@ -28,11 +28,11 @@ def main():
     parser.add_argument('--num_clustering', type=int, default=3)
 
     # Model Weights Tuning
-    parser.add_argument('--fc_weight', type=float, default=15.0)
-    parser.add_argument('--disc_weight', type=float, default=15.0)
+    parser.add_argument('--fc_weight', type=float, default=10.0)
+    parser.add_argument('--disc_weight', type=float, default=10.0)
 
     # Optimizer Settings
-    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--lr', type=float, default=1e-6)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
     parser.add_argument('--nesterov', action='store_true')
@@ -71,7 +71,7 @@ def main():
     kmeans = KMeans(n_clusters=args.num_clustering, device=device)
 
     model = DANN_Alex(pretrained=True, num_domain=args.num_clustering).to(device)
-    params = get_model_parts_with_weights(model, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
+    params = get_model_parts_with_weights(model, lr=args.lr, fc_weight=args.fc_weight, disc_weight=args.disc_weight)
     optimizer = optim.SGD(params, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay, nesterov=args.nesterov)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=args.lr_decay_gamma)
     # inv_lr_scheduler랑 ExponentialLR 옵션이 있긴함. utils/scheduler.py 참고
@@ -122,13 +122,12 @@ def main():
             f"NMI (Class): {class_nmi:.4f}, NMI (Domain): {domain_nmi:.4f}, NMI (Before): {before_nmi if before_nmi else 'N/A'}")
 
         wandb_log_data = {
-            "Epoch": epoch + 1,
             "NMI/Class": class_nmi,
             "NMI/Domain": domain_nmi,
         }
         if before_nmi is not None:
             wandb_log_data["NMI/Before"] = before_nmi
-        wandb.log(wandb_log_data)
+        wandb.log(wandb_log_data, step=epoch+1)
 
         # Data Imbalance 잡는 용도로 보임.
         weight = 1. / torch.bincount(clustered_labels, minlength=args.num_clustering)
@@ -184,7 +183,7 @@ def main():
             f"Alpha: {alpha:.4f} | "
             f"Loss Class: {epoch_loss_class:.4f} | "
             f"Loss Domain: {epoch_loss_domain:.4f} | "
-            f"Loss Entropy: {epoch_loss_entropy:.4f}"
+            f"Loss Entropy: {epoch_loss_entropy:.4f} | "
             f"Acc Class: {epoch_acc_class:.4f} | "
             f"Acc Domain: {epoch_acc_domain:.4f} | "
         )
@@ -197,7 +196,8 @@ def main():
             "Train/Loss/Domain": epoch_loss_domain,
             "Train/Loss/Entropy": epoch_loss_entropy,
             "Train/Loss/Total": epoch_loss_class + epoch_loss_domain + epoch_loss_entropy * beta,
-        })
+            }, step=epoch+1
+        )
 
         model.eval()
 
@@ -216,7 +216,7 @@ def main():
                 label_correct += (predicted_labels == labels).sum().item()
 
             label_acc = label_correct / total
-            wandb.log({f"{group} Label Accuracy": label_acc}, step=epoch)
+            wandb.log({f"{group} Label Accuracy": label_acc}, step=epoch+1)
             print(f"{group} Label Accuracy: {label_acc * 100:.3f}%")
 
 

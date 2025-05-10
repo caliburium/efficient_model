@@ -6,6 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import deeplake
 
+
 class PACS_Dataset(Dataset):
     VALID_DOMAINS = {
         'full': [0, 1, 2, 3],
@@ -146,6 +147,8 @@ def pacs_loader(split, domain=None, batch_size=128, min_scale=0.8, color_jitter=
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
+
+
 
     dataset = PACS_Dataset(split=split, domain=domain, transform=transform, download=True)
     loader = DataLoader(dataset, drop_last=True, batch_size=batch_size, shuffle=True, num_workers=0)
