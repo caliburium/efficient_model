@@ -2,13 +2,14 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.amp import autocast, GradScaler
+# from torch.amp import autocast, GradScaler
 from functions.lr_lambda import lr_lambda
 from model.Prunus import Prunus, prunus_weights
 from dataloader.data_loader import data_loader
 import numpy as np
 import wandb
 import time
+from tqdm import trange
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -41,7 +42,7 @@ def main():
 
     # Initialize Weights and Biases
     wandb.init(entity="hails",
-               project="Efficient Model",
+               project="Efficient Model dk",
                config=args.__dict__,
                name="[Prunus]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
@@ -66,7 +67,7 @@ def main():
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(pre_epochs):
+    for epoch in trange(pre_epochs):
         model.train()
         i = 0
 
@@ -211,6 +212,14 @@ def main():
             domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
             loss = label_loss + domain_loss
+            # print model.partition_switcher's gradient and parameters
+            for name, param in model.partition_switcher.named_parameters():
+                print(name)
+                if param.grad is None:
+                    print('param.grad is none')
+                else:
+                    print(torch.mean(torch.abs(param.grad)))
+                print(torch.mean(torch.abs(param.data)))
 
             loss.backward()
             optimizer.step()
