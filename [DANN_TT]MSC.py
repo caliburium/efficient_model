@@ -1,40 +1,33 @@
 import argparse
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.amp import autocast, GradScaler
 from functions.lr_lambda import lr_lambda
-from model.Prunus import Prunus, prunus_weights
-from dataloader.data_loader import data_loader
-import numpy as np
 import wandb
-import time
+from dataloader.data_loader import data_loader
+from model.DANN import DANN, dann_weights
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=500)
-    parser.add_argument('--pretrain_epoch', type=int, default=5)
+    parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--num_partition', type=int, default=2)
-    parser.add_argument('--num_classes', type=int, default=10)
-    parser.add_argument('--pre_classifier_out', type=int, default=1024)
-    parser.add_argument('--part_layer', type=int, default=384)
-
-    # Optimizer
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--pretrain_epoch', type=int, default=10)
+    parser.add_argument('--pre_lr', type=float, default=0.01)
+    parser.add_argument('--class_lr', type=float, default=0.01)
+    parser.add_argument('--domain_lr', type=float, default=0.01)
+    parser.add_argument('--hidden_size', type=int, default=256)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
-
-    # parameter weight amplifier
-    parser.add_argument('--pre_weight', type=float, default=1.0)
+    parser.add_argument('--feature_weight', type=float, default=1.0)
     parser.add_argument('--fc_weight', type=float, default=1.0)
-    parser.add_argument('--disc_weight', type=float, default=10.0)
-    parser.add_argument('--switcher_weight', type=float, default=10.0)
+    parser.add_argument('--disc_weight', type=float, default=1.0)
 
     args = parser.parse_args()
-
     pre_epochs = args.pretrain_epoch
     num_epochs = args.epoch
 
@@ -42,10 +35,8 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model",
                config=args.__dict__,
-               name="[Prunus" + str(args.num_partition)
-                    + "]MSC_lr:" + str(args.lr)
-                    + "_Batch:" + str(args.batch_size)
-                    + "_AMP_Disabled"
+               name="[DANN_TT]MSC_" + str(args.hidden_size) + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               + "_PreEp:" + str(args.pretrain_epoch)
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -54,19 +45,16 @@ def main():
 
     print("Data load complete, start training")
 
-    model = Prunus(num_classes=args.num_classes,
-                   pre_classifier_out=args.pre_classifier_out,
-                   n_partition=args.num_partition,
-                   part_layer=args.part_layer,
-                   device=device
-                   )
-
-    pre_opt = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-
-    param = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
-    optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    model = DANN(hidden_size=args.hidden_size).to(device)
+    pre_opt = optim.SGD(model.parameters(), lr=args.pre_lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer_class = optim.SGD(list(model.features.parameters()) + list(model.classifier.parameters()),
+                                lr=args.class_lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer_domain = optim.SGD(list(model.features.parameters()) + list(model.discriminator.parameters()),
+                                 lr=args.domain_lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    scheduler_class = optim.lr_scheduler.LambdaLR(optimizer_class, lr_lambda)
+    scheduler_domain = optim.lr_scheduler.LambdaLR(optimizer_domain, lr_lambda)
     criterion = nn.CrossEntropyLoss()
+    scaler = GradScaler("cuda")
 
     for epoch in range(pre_epochs):
         model.train()
@@ -89,27 +77,30 @@ def main():
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
             pre_opt.zero_grad()
+            with autocast(device_type='cuda'):
+                mnist_out, _ = model(mnist_images, alpha=lambda_p)
+                svhn_out, _ = model(svhn_images, alpha=lambda_p)
+                cifar_out, _ = model(cifar_images, alpha=lambda_p)
 
-            mnist_out_partition, _, mnist_switcher = model.pretrain_fwd(0, mnist_images, alpha=lambda_p)
-            svhn_out_partition, _, svhn_switcher = model.pretrain_fwd(0, svhn_images, alpha=lambda_p)
-            cifar_out_partition, _, cifar_switcher = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
+                mnist_loss = criterion(mnist_out, mnist_labels)
+                svhn_loss = criterion(svhn_out, svhn_labels)
+                cifar_loss = criterion(cifar_out, cifar_labels)
 
-            mnist_loss = criterion(mnist_out_partition, mnist_labels)
-            svhn_loss = criterion(svhn_out_partition, svhn_labels)
-            cifar_loss = criterion(cifar_out_partition, cifar_labels)
+                loss = (mnist_loss + svhn_loss) * 0.5 + cifar_loss
 
-            loss = mnist_loss + svhn_loss + cifar_loss
+            scaler.scale(loss).backward()
+            scaler.step(pre_opt)
+            scaler.update()
 
-            loss.backward()
             pre_opt.step()
 
             total_mnist_loss += mnist_loss.item()
             total_svhn_loss += svhn_loss.item()
             total_cifar_loss += cifar_loss.item()
 
-            mnist_correct = (torch.argmax(mnist_out_partition, dim=1) == mnist_labels).sum().item()
-            svhn_correct = (torch.argmax(svhn_out_partition, dim=1) == svhn_labels).sum().item()
-            cifar_correct = (torch.argmax(cifar_out_partition, dim=1) == cifar_labels).sum().item()
+            mnist_correct = (torch.argmax(mnist_out, dim=1) == mnist_labels).sum().item()
+            svhn_correct = (torch.argmax(svhn_out, dim=1) == svhn_labels).sum().item()
+            cifar_correct = (torch.argmax(cifar_out, dim=1) == cifar_labels).sum().item()
 
             total_mnist_correct += mnist_correct
             total_svhn_correct += svhn_correct
@@ -135,17 +126,11 @@ def main():
     print("Pretraining done")
 
     for epoch in range(num_epochs):
-        start_time = time.time()
         model.train()
-
         total_mnist_domain_loss, total_svhn_domain_loss, total_cifar_domain_loss, total_domain_loss = 0, 0, 0, 0
         total_mnist_domain_correct, total_svhn_domain_correct, total_cifar_domain_correct = 0, 0, 0
         total_mnist_loss, total_svhn_loss, total_cifar_loss, total_label_loss = 0, 0, 0, 0
         total_mnist_correct, total_svhn_correct, total_cifar_correct = 0, 0, 0
-
-        mnist_partition_counts = torch.zeros(args.num_partition, device=device)
-        svhn_partition_counts = torch.zeros(args.num_partition, device=device)
-        cifar_partition_counts = torch.zeros(args.num_partition, device=device)
         total_samples = 0
 
         for i, (mnist_data, svhn_data, cifar_data) in enumerate(zip(mnist_loader, svhn_loader, cifar_loader)):
@@ -162,31 +147,28 @@ def main():
             svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
             cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
-            optimizer.zero_grad()
+            optimizer_class.zero_grad()
+            optimizer_domain.zero_grad()
+            with autocast(device_type='cuda'):
+                mnist_out, mnist_domain_out = model(mnist_images, alpha=lambda_p)
+                svhn_out, svhn_domain_out = model(svhn_images, alpha=lambda_p)
+                cifar_out, cifar_domain_out = model(cifar_images, alpha=lambda_p)
 
-            mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
-            svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
-            cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p)
+                mnist_label_loss = criterion(mnist_out, mnist_labels)
+                svhn_label_loss = criterion(svhn_out, svhn_labels)
+                cifar_label_loss = criterion(cifar_out, cifar_labels)
+                label_loss = (mnist_label_loss + svhn_label_loss) * 0.5 + cifar_label_loss
 
-            mnist_label_loss = criterion(mnist_out_part, mnist_labels)
-            svhn_label_loss = criterion(svhn_out_part, svhn_labels)
-            cifar_label_loss = criterion(cifar_out_part, cifar_labels)
-            label_loss = (mnist_label_loss + svhn_label_loss) * 0.5 + cifar_label_loss
+                mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
+                svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
+                cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
+                domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
-            mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
-            svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
-            cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
-            domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
-
-            loss = label_loss + domain_loss
-
-            loss.backward()
-            optimizer.step()
-
-            # count partition ratio
-            mnist_partition_counts += torch.bincount(mnist_part_idx, minlength=args.num_partition).to(device)
-            svhn_partition_counts += torch.bincount(svhn_part_idx, minlength=args.num_partition).to(device)
-            cifar_partition_counts += torch.bincount(cifar_part_idx, minlength=args.num_partition).to(device)
+            scaler.scale(label_loss).backward(retain_graph=True)
+            scaler.scale(domain_loss).backward()
+            scaler.step(optimizer_class)
+            scaler.step(optimizer_domain)
+            scaler.update()
 
             total_label_loss += label_loss.item()
             total_mnist_loss += mnist_label_loss.item()
@@ -198,9 +180,9 @@ def main():
             total_svhn_domain_loss += svhn_domain_loss.item()
             total_cifar_domain_loss += cifar_domain_loss.item()
 
-            total_mnist_correct += (torch.argmax(mnist_out_part, dim=1) == mnist_labels).sum().item()
-            total_svhn_correct += (torch.argmax(svhn_out_part, dim=1) == svhn_labels).sum().item()
-            total_cifar_correct += (torch.argmax(cifar_out_part, dim=1) == cifar_labels).sum().item()
+            total_mnist_correct += (torch.argmax(mnist_out, dim=1) == mnist_labels).sum().item()
+            total_svhn_correct += (torch.argmax(svhn_out, dim=1) == svhn_labels).sum().item()
+            total_cifar_correct += (torch.argmax(cifar_out, dim=1) == cifar_labels).sum().item()
 
             total_mnist_domain_correct += (torch.argmax(mnist_domain_out, dim=1) == mnist_dlabels).sum().item()
             total_svhn_domain_correct += (torch.argmax(svhn_domain_out, dim=1) == svhn_dlabels).sum().item()
@@ -208,18 +190,8 @@ def main():
 
             total_samples += mnist_labels.size(0)
 
-        scheduler.step()
-
-        mnist_partition_ratios = mnist_partition_counts / total_samples * 100
-        svhn_partition_ratios = svhn_partition_counts / total_samples * 100
-        cifar_partition_ratios = cifar_partition_counts / total_samples * 100
-
-        mnist_partition_ratio_str = " | ".join(
-            [f"Partition {p}: {mnist_partition_ratios[p]:.2f}%" for p in range(args.num_partition)])
-        svhn_partition_ratio_str = " | ".join(
-            [f"Partition {p}: {svhn_partition_ratios[p]:.2f}%" for p in range(args.num_partition)])
-        cifar_partition_ratio_str = " | ".join(
-            [f"Partition {p}: {cifar_partition_ratios[p]:.2f}%" for p in range(args.num_partition)])
+        scheduler_class.step()
+        scheduler_domain.step()
 
         mnist_domain_avg_loss = total_mnist_domain_loss / total_samples
         svhn_domain_avg_loss = total_svhn_domain_loss / total_samples
@@ -239,15 +211,10 @@ def main():
         svhn_domain_acc_epoch = total_svhn_domain_correct / total_samples * 100
         cifar_domain_acc_epoch = total_cifar_domain_correct / total_samples * 100
 
-        end_time = time.time()
         print(f'Epoch [{epoch + 1}/{num_epochs}] | '
-              f'MNIST Ratios {mnist_partition_ratio_str} | '
-              f'SVHN Ratios {svhn_partition_ratio_str} | '
-              f'CIFAR Ratios {cifar_partition_ratio_str} | '
               f'Label Loss: {label_avg_loss:.4f} | '
               f'Domain Loss: {domain_avg_loss:.4f} | '
               f'Total Loss: {label_avg_loss + domain_avg_loss:.4f} | '
-              f'Time: {end_time - start_time:.2f} sec | '
         )
         print(f'MNIST Loss: {mnist_avg_loss:.4f} | '
               f'SVHN Loss: {svhn_avg_loss:.4f} | '
@@ -264,9 +231,6 @@ def main():
               f'CIFAR Domain Acc: {cifar_domain_acc_epoch:.3f}% |')
 
         wandb.log({
-            **{f"Train/MNIST Partition {p} Ratio": mnist_partition_ratios[p].item() for p in range(args.num_partition)},
-            **{f"Train/SVHN Partition {p} Ratio": svhn_partition_ratios[p].item() for p in range(args.num_partition)},
-            **{f"Train/CIFAR Partition {p} Ratio": cifar_partition_ratios[p].item() for p in range(args.num_partition)},
             'Train/MNIST Label Loss': mnist_avg_loss,
             'Train/SVHN Label Loss': svhn_avg_loss,
             'Train/CIFAR Label Loss': cifar_avg_loss,
@@ -282,43 +246,34 @@ def main():
             'Train/MNIST Domain Accuracy': mnist_domain_acc_epoch,
             'Train/SVHN Domain Accuracy': svhn_domain_acc_epoch,
             'Train/CIFAR Domain Accuracy': cifar_domain_acc_epoch,
-            'Train/Training Time': end_time - start_time
         }, step=epoch + 1)
 
         model.eval()
 
         def tester(loader, group, domain_label):
             label_correct, domain_correct, total = 0, 0, 0
-            partition_counts = torch.zeros(args.num_partition, device=device)
+
             for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
-
-                class_output_partitioned, domain_output, partition_idx = model(images, alpha=0.0)
-
-                total += images.size(0)
-                label_correct += (torch.argmax(class_output_partitioned, dim=1) == labels).sum().item()
+                class_output, domain_output = model(images, alpha=0.0)
+                label_correct += (torch.argmax(class_output, dim=1) == labels).sum().item()
                 domain_correct += (torch.argmax(domain_output, dim=1) == domain_label).sum().item()
-                partition_counts += torch.bincount(partition_idx, minlength=args.num_partition)
+                total += images.size(0)
 
             label_acc = label_correct / total * 100
             domain_acc = domain_correct / total * 100
-            partition_ratios = partition_counts / total * 100
-            partition_ratio_str = " | ".join(
-                [f"Partition {p}: {partition_ratios[p]:.2f}%" for p in range(args.num_partition)])
 
             wandb.log({
                 f'Test/Label {group} Accuracy': label_acc,
                 f'Test/Domain {group} Accuracy': domain_acc,
-                **{f"Test/{group} Partition {p} Ratio": partition_ratios[p].item() for p in range(args.num_partition)}
             }, step=epoch + 1)
 
-            print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}% | Partition Ratio: {partition_ratio_str}')
+            print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}%')
 
         with torch.no_grad():
             tester(mnist_loader_test, 'MNIST', 0)
             tester(svhn_loader_test, 'SVHN', 0)
             tester(cifar_loader_test, 'CIFAR', 1)
-
 
 if __name__ == '__main__':
     main()

@@ -2,6 +2,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.amp import autocast, GradScaler
 from functions.lr_lambda import lr_lambda
 from model.Prunus import Prunus, prunus_weights
 from dataloader.data_loader import data_loader
@@ -15,7 +16,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=500)
-    parser.add_argument('--pretrain_epoch', type=int, default=5)
+    parser.add_argument('--pretrain_epoch', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
@@ -31,7 +32,7 @@ def main():
     parser.add_argument('--pre_weight', type=float, default=1.0)
     parser.add_argument('--fc_weight', type=float, default=1.0)
     parser.add_argument('--disc_weight', type=float, default=10.0)
-    parser.add_argument('--switcher_weight', type=float, default=10.0)
+    parser.add_argument('--switcher_weight', type=float, default=1.0)
 
     args = parser.parse_args()
 
@@ -42,10 +43,8 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model",
                config=args.__dict__,
-               name="[Prunus" + str(args.num_partition)
-                    + "]MSC_lr:" + str(args.lr)
+               name="[Prunus]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
-                    + "_AMP_Disabled"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -61,10 +60,9 @@ def main():
                    device=device
                    )
 
-    pre_opt = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-
-    param = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
-    optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    param1 = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
+    pre_opt = optim.SGD(param1, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
@@ -72,13 +70,15 @@ def main():
         model.train()
         i = 0
 
-        total_mnist_loss, total_svhn_loss, total_cifar_loss = 0, 0, 0
+        total_mnist_loss, total_svhn_loss, total_cifar_loss, total_label_loss = 0, 0, 0, 0
         total_mnist_correct, total_svhn_correct, total_cifar_correct = 0, 0, 0
+        total_mnist_domain_loss, total_svhn_domain_loss, total_cifar_domain_loss, total_domain_loss = 0, 0, 0, 0
+        total_mnist_domain_correct, total_svhn_domain_correct, total_cifar_domain_correct = 0, 0, 0
         total_samples = 0
 
         for mnist_data, svhn_data, cifar_data in zip(mnist_loader, svhn_loader, cifar_loader):
-
-            lambda_p = 0.0
+            p = epoch / num_epochs
+            lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
 
             # Training with source data
             mnist_images, mnist_labels = mnist_data
@@ -87,18 +87,26 @@ def main():
             svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
             cifar_images, cifar_labels = cifar_data
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
+            mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
+            svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
+            cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
             pre_opt.zero_grad()
-
-            mnist_out_partition, _, mnist_switcher = model.pretrain_fwd(0, mnist_images, alpha=lambda_p)
-            svhn_out_partition, _, svhn_switcher = model.pretrain_fwd(0, svhn_images, alpha=lambda_p)
-            cifar_out_partition, _, cifar_switcher = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
+            mnist_out_partition, mnist_domain_out, _ = model.pretrain_fwd(0, mnist_images, alpha=lambda_p)
+            svhn_out_partition, svhn_domain_out, _ = model.pretrain_fwd(0, svhn_images, alpha=lambda_p)
+            cifar_out_partition, cifar_domain_out, _ = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
 
             mnist_loss = criterion(mnist_out_partition, mnist_labels)
             svhn_loss = criterion(svhn_out_partition, svhn_labels)
             cifar_loss = criterion(cifar_out_partition, cifar_labels)
+            label_loss = (mnist_loss + svhn_loss) * 0.5 + cifar_loss
 
-            loss = mnist_loss + svhn_loss + cifar_loss
+            mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
+            svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
+            cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
+            domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
+
+            loss = label_loss + domain_loss
 
             loss.backward()
             pre_opt.step()
@@ -106,31 +114,55 @@ def main():
             total_mnist_loss += mnist_loss.item()
             total_svhn_loss += svhn_loss.item()
             total_cifar_loss += cifar_loss.item()
+            total_label_loss += label_loss.item()
 
-            mnist_correct = (torch.argmax(mnist_out_partition, dim=1) == mnist_labels).sum().item()
-            svhn_correct = (torch.argmax(svhn_out_partition, dim=1) == svhn_labels).sum().item()
-            cifar_correct = (torch.argmax(cifar_out_partition, dim=1) == cifar_labels).sum().item()
+            total_mnist_domain_loss += mnist_domain_loss.item()
+            total_svhn_domain_loss += svhn_domain_loss.item()
+            total_cifar_domain_loss += cifar_domain_loss.item()
+            total_domain_loss += domain_loss.item()
 
-            total_mnist_correct += mnist_correct
-            total_svhn_correct += svhn_correct
-            total_cifar_correct += cifar_correct
+            total_mnist_correct += (torch.argmax(mnist_out_partition, dim=1) == mnist_labels).sum().item()
+            total_svhn_correct += (torch.argmax(svhn_out_partition, dim=1) == svhn_labels).sum().item()
+            total_cifar_correct += (torch.argmax(cifar_out_partition, dim=1) == cifar_labels).sum().item()
+
+            total_mnist_domain_correct += (torch.argmax(mnist_domain_out, dim=1) == mnist_dlabels).sum().item()
+            total_svhn_domain_correct += (torch.argmax(svhn_domain_out, dim=1) == svhn_dlabels).sum().item()
+            total_cifar_domain_correct += (torch.argmax(cifar_domain_out, dim=1) == cifar_dlabels).sum().item()
 
             total_samples += mnist_labels.size(0)
 
             i += 1
 
+        mnist_loss_epoch = total_mnist_loss / total_samples
+        svhn_loss_epoch = total_svhn_loss / total_samples
+        cifar_loss_epoch = total_cifar_loss / total_samples
+        label_avg_loss = total_label_loss / (total_samples * 3)
+
+        mnist_domain_avg_loss = total_mnist_domain_loss / total_samples
+        svhn_domain_avg_loss = total_svhn_domain_loss / total_samples
+        cifar_domain_avg_loss = total_cifar_domain_loss / total_samples
+        domain_avg_loss = total_domain_loss / (total_samples * 3)
+
         mnist_acc_epoch = (total_mnist_correct / total_samples) * 100
         svhn_acc_epoch = (total_svhn_correct / total_samples) * 100
         cifar_acc_epoch = (total_cifar_correct / total_samples) * 100
 
-        mnist_loss_epoch = total_mnist_loss / total_samples
-        svhn_loss_epoch = total_svhn_loss / total_samples
-        cifar_loss_epoch = total_cifar_loss / total_samples
+        mnist_domain_acc_epoch = total_mnist_domain_correct / total_samples * 100
+        svhn_domain_acc_epoch = total_svhn_domain_correct / total_samples * 100
+        cifar_domain_acc_epoch = total_cifar_domain_correct / total_samples * 100
 
         print(f"Pre Epoch {epoch + 1} | "
-              f"MNIST Acc: {mnist_acc_epoch:.2f}%, Loss: {mnist_loss_epoch:.6f} | "
+              f"Label Loss: {label_avg_loss:.6f} | "
+              f"Domain Loss: {domain_avg_loss:.6f}"
+              )
+        print(f"MNIST Acc: {mnist_acc_epoch:.2f}%, Loss: {mnist_loss_epoch:.6f} | "
               f"SVHN Acc: {svhn_acc_epoch:.2f}%, Loss: {svhn_loss_epoch:.6f} | "
-              f"CIFAR Acc: {cifar_acc_epoch:.2f}%, Loss: {cifar_loss_epoch:.6f}")
+              f"CIFAR Acc: {cifar_acc_epoch:.2f}%, Loss: {cifar_loss_epoch:.6f}"
+              )
+        print(f"MNIST Domain Acc: {mnist_domain_acc_epoch:.2f}%, Loss: {mnist_domain_avg_loss:.6f} | "
+              f"SVHN Acc: {svhn_domain_acc_epoch:.2f}%, Loss: {svhn_domain_avg_loss:.6f} | "
+              f"CIFAR Acc: {cifar_domain_acc_epoch:.2f}%, Loss: {cifar_domain_avg_loss:.6f}"
+              )
 
     print("Pretraining done")
 

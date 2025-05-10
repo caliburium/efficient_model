@@ -1,55 +1,71 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.models as models
+
 from functions.ReverseLayerF import ReverseLayerF
 from torch.nn.functional import gumbel_softmax
+from model.SimpleCNN import SimpleCNN
 
 
 class Prunus(nn.Module):
-    def __init__(self, num_classes=10, pre_classifier_out=1024, n_partition=2, part_layer=384, num_domains=2,
+    def __init__(self, feature_extractor='SimpleCNN', pretrained=True, num_classes=10,
+                 pre_classifier_out=1024, n_partition=2, part_layer=384, num_domains=2,
                  device='cuda' if torch.cuda.is_available() else 'cpu'):
         super(Prunus, self).__init__()
-        self.device = device
+        self.restored = False
+        self.num_classes = num_classes
+        self.pre_classifier_out = pre_classifier_out
         self.n_partition = n_partition
+        self.part_layer = part_layer
+        self.device = device
 
-        self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
+        if feature_extractor == 'SimpleCNN':  # 32*32 -> 128*4*4 | 228*228 -> 128*28*28
+            self.features = SimpleCNN().features
+        elif feature_extractor == 'Alexnet':  # 228*228 -> 256*6*6
+            alexnet = models.alexnet(pretrained=pretrained)
+            self.features = alexnet.features
+        elif feature_extractor == 'VGG16':  # 32*32 -> 512*1*1 | 228*228 -> 512*7*7
+            vgg16 = models.vgg16(pretrained=pretrained)
+            self.features = vgg16.features
+        elif feature_extractor == 'ResNet50':  # 228*228 -> 2048*1*1
+            resnet50 = models.resnet50(pretrained=pretrained)
+            self.features = nn.Sequential(*list(resnet50.children())[:-2])
 
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
-            nn.ReLU()
-        )
-
-        self.pre_classifier = nn.Sequential(
-            nn.Linear(128 * 8 * 8, pre_classifier_out),
-            nn.BatchNorm1d(pre_classifier_out),
-            nn.ReLU(),
-        )
+        self.pre_classifier = nn.Sequential(nn.Identity())
 
         self.classifier = nn.Sequential(
             nn.Linear(pre_classifier_out, part_layer),
             nn.BatchNorm1d(part_layer),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(part_layer, num_classes)
         )
 
         self.discriminator = nn.Sequential(
             nn.Linear(pre_classifier_out, part_layer),
             nn.BatchNorm1d(part_layer),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
         )
-
         self.discriminator_fc = nn.Linear(part_layer, num_domains)
 
-        self.partition_switcher = nn.Linear(part_layer, n_partition)
+        self.partition_switcher = nn.Sequential(
+            nn.Linear(part_layer, self.n_partition),
+            nn.ReLU(inplace=True)
+        )
 
         self.create_partitioned_classifier()
         self.sync_classifier_with_subnetworks()
+        self.feature_dim = None
         self.to(self.device)
+
+    # Pre_classifier that can correspond to any input value
+    def _initialize_pre_classifier(self, feature_size):
+        self.feature_dim = feature_size
+        self.pre_classifier = nn.Sequential(
+            nn.Linear(feature_size, self.pre_classifier_out),
+            nn.BatchNorm1d(self.pre_classifier_out),
+            nn.ReLU(inplace=True),
+        )
 
     # Method to partition the classifier into sub-networks
     def create_partitioned_classifier(self):
@@ -74,7 +90,7 @@ class Prunus(nn.Module):
                     partitioned_layer.append(sublayer)
                     partitioned_layer.append(nn.ReLU(inplace=True))
 
-                elif i == len(linear_layers) - 1:
+                elif i == len(linear_layers) - 1:  # ¸¶Áö¸· ·¹ÀÌ¾î
                     input_size = linear_layer.in_features
                     output_size = linear_layer.out_features
                     partition_size = input_size // self.n_partition
@@ -117,6 +133,10 @@ class Prunus(nn.Module):
     def forward(self, input_data, alpha=1.0):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
+
+        if self.feature_dim is None:
+            self._initialize_pre_classifier(feature.size(1))
+            self.to(input_data.device)
         feature = self.pre_classifier(feature)
 
         reverse_feature = ReverseLayerF.apply(feature, alpha)
@@ -151,6 +171,9 @@ class Prunus(nn.Module):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
 
+        if self.feature_dim is None:
+            self._initialize_pre_classifier(feature.size(1))
+            self.to(input_data.device)
         feature = self.pre_classifier(feature)
         reverse_feature = ReverseLayerF.apply(feature, alpha)
         domain_penul = self.discriminator(reverse_feature)

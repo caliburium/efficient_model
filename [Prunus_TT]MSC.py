@@ -2,6 +2,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.amp import autocast, GradScaler
 from functions.lr_lambda import lr_lambda
 from model.Prunus import Prunus, prunus_weights
 from dataloader.data_loader import data_loader
@@ -23,7 +24,7 @@ def main():
     parser.add_argument('--part_layer', type=int, default=384)
 
     # Optimizer
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr', type=float, default=0.05)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
 
@@ -45,7 +46,7 @@ def main():
                name="[Prunus" + str(args.num_partition)
                     + "]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
-                    + "_AMP_Disabled"
+                    + "_noscheduler"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -63,10 +64,15 @@ def main():
 
     pre_opt = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
 
-    param = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
+    # param = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
+    optimizer = optim.SGD(list(model.features.parameters())
+                          + list(model.pre_classifier.parameters())
+                          + list(model.p),
+                          lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
+    scaler = GradScaler("cuda")
 
     for epoch in range(pre_epochs):
         model.train()
@@ -89,18 +95,21 @@ def main():
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
 
             pre_opt.zero_grad()
+            with autocast(device_type='cuda'):
+                mnist_out_partition, _, mnist_switcher = model.pretrain_fwd(0, mnist_images, alpha=lambda_p)
+                svhn_out_partition, _, svhn_switcher = model.pretrain_fwd(0, svhn_images, alpha=lambda_p)
+                cifar_out_partition, _, cifar_switcher = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
 
-            mnist_out_partition, _, mnist_switcher = model.pretrain_fwd(0, mnist_images, alpha=lambda_p)
-            svhn_out_partition, _, svhn_switcher = model.pretrain_fwd(0, svhn_images, alpha=lambda_p)
-            cifar_out_partition, _, cifar_switcher = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
+                mnist_loss = criterion(mnist_out_partition, mnist_labels)
+                svhn_loss = criterion(svhn_out_partition, svhn_labels)
+                cifar_loss = criterion(cifar_out_partition, cifar_labels)
 
-            mnist_loss = criterion(mnist_out_partition, mnist_labels)
-            svhn_loss = criterion(svhn_out_partition, svhn_labels)
-            cifar_loss = criterion(cifar_out_partition, cifar_labels)
+                loss = mnist_loss + svhn_loss + cifar_loss
 
-            loss = mnist_loss + svhn_loss + cifar_loss
+            scaler.scale(loss).backward()
+            scaler.step(pre_opt)
+            scaler.update()
 
-            loss.backward()
             pre_opt.step()
 
             total_mnist_loss += mnist_loss.item()
@@ -163,25 +172,26 @@ def main():
             cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
+            with autocast(device_type='cuda'):
+                mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
+                svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
+                cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p)
 
-            mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
-            svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
-            cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p)
+                mnist_label_loss = criterion(mnist_out_part, mnist_labels)
+                svhn_label_loss = criterion(svhn_out_part, svhn_labels)
+                cifar_label_loss = criterion(cifar_out_part, cifar_labels)
+                label_loss = (mnist_label_loss + svhn_label_loss) * 0.5 + cifar_label_loss
 
-            mnist_label_loss = criterion(mnist_out_part, mnist_labels)
-            svhn_label_loss = criterion(svhn_out_part, svhn_labels)
-            cifar_label_loss = criterion(cifar_out_part, cifar_labels)
-            label_loss = (mnist_label_loss + svhn_label_loss) * 0.5 + cifar_label_loss
+                mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
+                svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
+                cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
+                domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
-            mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
-            svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
-            cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
-            domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
+                loss = label_loss + domain_loss
 
-            loss = label_loss + domain_loss
-
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             # count partition ratio
             mnist_partition_counts += torch.bincount(mnist_part_idx, minlength=args.num_partition).to(device)
@@ -208,7 +218,7 @@ def main():
 
             total_samples += mnist_labels.size(0)
 
-        scheduler.step()
+        # scheduler.step()
 
         mnist_partition_ratios = mnist_partition_counts / total_samples * 100
         svhn_partition_ratios = svhn_partition_counts / total_samples * 100

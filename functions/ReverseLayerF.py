@@ -1,7 +1,6 @@
 # https://github.com/fungtion/DANN/blob/master/models/functions.py
 from torch.autograd import Function
 
-
 class ReverseLayerF(Function):
     @staticmethod
     def forward(ctx, x, lambda_p):
