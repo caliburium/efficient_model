@@ -114,7 +114,7 @@ class Prunus(nn.Module):
                 linear_layer.bias = nn.Parameter(bs_.detach().clone())
 
 
-    def forward(self, input_data, alpha=1.0):
+    def forward(self, input_data, alpha=1.0,tau=1.0):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
         feature = self.pre_classifier(feature)
@@ -124,7 +124,7 @@ class Prunus(nn.Module):
         domain_output = self.discriminator_fc(domain_penul)
 
         partition_switcher_output = self.partition_switcher(domain_penul)
-        gumbel_output = gumbel_softmax(partition_switcher_output, tau=0.1, hard=False)
+        gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
         partition_idx = torch.argmax(gumbel_output, dim=1)
         class_output = []
 
@@ -143,7 +143,7 @@ class Prunus(nn.Module):
         if self.training:
             self.sync_classifier_with_subnetworks()
         class_output_partitioned = torch.cat(class_output, dim=0)
-        class_output = self.classifier(feature)
+        # class_output = self.classifier(feature)
 
         return class_output_partitioned, domain_output, partition_idx
 
