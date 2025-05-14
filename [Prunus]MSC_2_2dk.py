@@ -18,7 +18,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=500)
-    parser.add_argument('--pretrain_epoch', type=int, default=10)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
@@ -33,11 +33,12 @@ def main():
     # parameter weight amplifier
     parser.add_argument('--pre_weight', type=float, default=1.0)
     parser.add_argument('--fc_weight', type=float, default=1.0)
-    parser.add_argument('--disc_weight', type=float, default=1.0)
+    parser.add_argument('--disc_weight', type=float, default=10)
     parser.add_argument('--switcher_weight', type=float, default=1.0)
 
     # load pretrained model
-    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_pretrained_epoch_10.pth')
+    # parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_pretrained_epoch_1.pth')
+    parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
 
