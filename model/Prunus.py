@@ -72,7 +72,7 @@ class Prunus(nn.Module):
                     sublayer = nn.Linear(input_size, partition_size)
 
                     partitioned_layer.append(sublayer)
-                    partitioned_layer.append(nn.ReLU(inplace=True))
+                    partitioned_layer.append(nn.ReLU())
 
                 elif i == len(linear_layers) - 1:
                     input_size = linear_layer.in_features
