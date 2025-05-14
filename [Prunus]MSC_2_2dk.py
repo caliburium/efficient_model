@@ -214,9 +214,9 @@ def main():
             svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
             cifar_images, cifar_labels = cifar_data
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
-            # mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
-            # svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
-            # cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
+            mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
+            svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
+            cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
 
@@ -229,12 +229,12 @@ def main():
             cifar_label_loss = criterion(cifar_out_part, cifar_labels)
             label_loss = (mnist_label_loss + svhn_label_loss) * 0.5 + cifar_label_loss
 
-            # mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
-            # svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
-            # cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
-            # domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
+            mnist_domain_loss = criterion(mnist_domain_out, mnist_dlabels)
+            svhn_domain_loss = criterion(svhn_domain_out, svhn_dlabels)
+            cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
+            domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
-            loss = label_loss * 1e8
+            loss = label_loss * 1e8 + domain_loss
 
             loss.backward()
             # print model.partition_switcher's gradient and parameters
@@ -260,18 +260,18 @@ def main():
             total_svhn_loss += svhn_label_loss.item()
             total_cifar_loss += cifar_label_loss.item()
 
-            # total_domain_loss += domain_loss.item()
-            # total_mnist_domain_loss += mnist_domain_loss.item()
-            # total_svhn_domain_loss += svhn_domain_loss.item()
-            # total_cifar_domain_loss += cifar_domain_loss.item()
+            total_domain_loss += domain_loss.item()
+            total_mnist_domain_loss += mnist_domain_loss.item()
+            total_svhn_domain_loss += svhn_domain_loss.item()
+            total_cifar_domain_loss += cifar_domain_loss.item()
 
             total_mnist_correct += (torch.argmax(mnist_out_part, dim=1) == mnist_labels).sum().item()
             total_svhn_correct += (torch.argmax(svhn_out_part, dim=1) == svhn_labels).sum().item()
             total_cifar_correct += (torch.argmax(cifar_out_part, dim=1) == cifar_labels).sum().item()
 
-            # total_mnist_domain_correct += (torch.argmax(mnist_domain_out, dim=1) == mnist_dlabels).sum().item()
-            # total_svhn_domain_correct += (torch.argmax(svhn_domain_out, dim=1) == svhn_dlabels).sum().item()
-            # total_cifar_domain_correct += (torch.argmax(cifar_domain_out, dim=1) == cifar_dlabels).sum().item()
+            total_mnist_domain_correct += (torch.argmax(mnist_domain_out, dim=1) == mnist_dlabels).sum().item()
+            total_svhn_domain_correct += (torch.argmax(svhn_domain_out, dim=1) == svhn_dlabels).sum().item()
+            total_cifar_domain_correct += (torch.argmax(cifar_domain_out, dim=1) == cifar_dlabels).sum().item()
 
             total_samples += mnist_labels.size(0)
 
@@ -288,10 +288,10 @@ def main():
         cifar_partition_ratio_str = " | ".join(
             [f"Partition {p}: {cifar_partition_ratios[p]:.2f}%" for p in range(args.num_partition)])
 
-        # mnist_domain_avg_loss = total_mnist_domain_loss / total_samples
-        # svhn_domain_avg_loss = total_svhn_domain_loss / total_samples
-        # cifar_domain_avg_loss = total_cifar_domain_loss / total_samples
-        # domain_avg_loss = total_domain_loss / (total_samples * 3)
+        mnist_domain_avg_loss = total_mnist_domain_loss / total_samples
+        svhn_domain_avg_loss = total_svhn_domain_loss / total_samples
+        cifar_domain_avg_loss = total_cifar_domain_loss / total_samples
+        domain_avg_loss = total_domain_loss / (total_samples * 3)
 
         mnist_avg_loss = total_mnist_loss / total_samples
         svhn_avg_loss = total_svhn_loss / total_samples
@@ -302,9 +302,9 @@ def main():
         svhn_acc_epoch = total_svhn_correct / total_samples * 100
         cifar_acc_epoch = total_cifar_correct / total_samples * 100
 
-        # mnist_domain_acc_epoch = total_mnist_domain_correct / total_samples * 100
-        # svhn_domain_acc_epoch = total_svhn_domain_correct / total_samples * 100
-        # cifar_domain_acc_epoch = total_cifar_domain_correct / total_samples * 100
+        mnist_domain_acc_epoch = total_mnist_domain_correct / total_samples * 100
+        svhn_domain_acc_epoch = total_svhn_domain_correct / total_samples * 100
+        cifar_domain_acc_epoch = total_cifar_domain_correct / total_samples * 100
 
         end_time = time.time()
         print(f'Epoch [{epoch + 1}/{num_epochs}] | '
@@ -312,23 +312,23 @@ def main():
               f'SVHN Ratios {svhn_partition_ratio_str} | '
               f'CIFAR Ratios {cifar_partition_ratio_str} | '
               f'Label Loss: {label_avg_loss:.4f} | '
-            #   f'Domain Loss: {domain_avg_loss:.4f} | '
-            #   f'Total Loss: {label_avg_loss + domain_avg_loss:.4f} | '
+              f'Domain Loss: {domain_avg_loss:.4f} | '
+              f'Total Loss: {label_avg_loss + domain_avg_loss:.4f} | '
               f'Time: {end_time - start_time:.2f} sec | '
         )
         print(f'MNIST Loss: {mnist_avg_loss:.4f} | '
               f'SVHN Loss: {svhn_avg_loss:.4f} | '
               f'CIFAR Loss: {cifar_avg_loss:.4f} | '
-            #   f'MNIST Domain Loss: {mnist_domain_avg_loss:.4f} | '
-            #   f'SVHN Domain Loss: {svhn_domain_avg_loss:.4f} | '
-            #   f'CIFAR Domain Loss: {cifar_domain_avg_loss:.4f} | '
+              f'MNIST Domain Loss: {mnist_domain_avg_loss:.4f} | '
+              f'SVHN Domain Loss: {svhn_domain_avg_loss:.4f} | '
+              f'CIFAR Domain Loss: {cifar_domain_avg_loss:.4f} | '
         )
         print(f'MNIST Acc: {mnist_acc_epoch:.3f}% | '
               f'SVHN Acc: {svhn_acc_epoch:.3f}% | '
               f'CIFAR Acc: {cifar_acc_epoch:.3f}% | '
-            #   f'MNIST Domain Acc: {mnist_domain_acc_epoch:.3f}% | '
-            #   f'SVHN Domain Acc: {svhn_domain_acc_epoch:.3f}% | '
-            #   f'CIFAR Domain Acc: {cifar_domain_acc_epoch:.3f}% |'
+              f'MNIST Domain Acc: {mnist_domain_acc_epoch:.3f}% | '
+              f'SVHN Domain Acc: {svhn_domain_acc_epoch:.3f}% | '
+              f'CIFAR Domain Acc: {cifar_domain_acc_epoch:.3f}% |'
               )
 
         wandb.log({
@@ -339,17 +339,17 @@ def main():
             'Train/SVHN Label Loss': svhn_avg_loss,
             'Train/CIFAR Label Loss': cifar_avg_loss,
             'Train/Label Loss': label_avg_loss,
-            # 'Train/Domain MNIST Loss': mnist_domain_avg_loss,
-            # 'Train/Domain SVHN Loss': svhn_domain_avg_loss,
-            # 'Train/Domain CIFAR Loss': cifar_domain_avg_loss,
-            # 'Train/Domain Loss': domain_avg_loss,
-            # 'Train/Total Loss': (label_avg_loss + domain_avg_loss),
+            'Train/Domain MNIST Loss': mnist_domain_avg_loss,
+            'Train/Domain SVHN Loss': svhn_domain_avg_loss,
+            'Train/Domain CIFAR Loss': cifar_domain_avg_loss,
+            'Train/Domain Loss': domain_avg_loss,
+            'Train/Total Loss': (label_avg_loss + domain_avg_loss),
             'Train/MNIST Label Accuracy': mnist_acc_epoch,
             'Train/SVHN Label Accuracy': svhn_acc_epoch,
             'Train/CIFAR Label Accuracy': cifar_acc_epoch,
-            # 'Train/MNIST Domain Accuracy': mnist_domain_acc_epoch,
-            # 'Train/SVHN Domain Accuracy': svhn_domain_acc_epoch,
-            # 'Train/CIFAR Domain Accuracy': cifar_domain_acc_epoch,
+            'Train/MNIST Domain Accuracy': mnist_domain_acc_epoch,
+            'Train/SVHN Domain Accuracy': svhn_domain_acc_epoch,
+            'Train/CIFAR Domain Accuracy': cifar_domain_acc_epoch,
             'Train/Training Time': end_time - start_time
         }, step=epoch + 1)
 
