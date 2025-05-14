@@ -67,7 +67,7 @@ def main():
 
     param1 = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
     pre_opt = optim.SGD(param1, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr*10, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
@@ -233,7 +233,7 @@ def main():
             # cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
             # domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
-            loss = label_loss * 1e7
+            loss = label_loss * 1e8
 
             loss.backward()
             # print model.partition_switcher's gradient and parameters
