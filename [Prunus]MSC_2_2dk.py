@@ -35,10 +35,10 @@ def main():
     parser.add_argument('--fc_weight', type=float, default=1.0)
     parser.add_argument('--disc_weight', type=float, default=10)
     parser.add_argument('--switcher_weight', type=float, default=1.0)
-    parser.add_argument('--lr_switcher', type=float, default=1.0)
+    parser.add_argument('--lr_switcher', type=float, default=3.0)
 
     # load pretrained model
-    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_pretrained_epoch_5.pth')
+    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_pretrained_epoch_1.pth')
     # parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
@@ -235,7 +235,8 @@ def main():
             cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
             domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
-            loss = label_loss * 1e7 + domain_loss
+            # loss = label_loss + domain_loss
+            loss = label_loss * 1e8 + domain_loss
 
             loss.backward()
             # print model.partition_switcher's gradient and parameters
