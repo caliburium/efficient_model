@@ -22,9 +22,10 @@ def main():
     parser.add_argument('--num_classes', type=int, default=10)
     parser.add_argument('--pre_classifier_out', type=int, default=1024)
     parser.add_argument('--part_layer', type=int, default=384)
+    parser.add_argument('--tau', type=float, default=0.5)
 
     # Optimizer
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr', type=float, default=0.1)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
 
@@ -45,6 +46,7 @@ def main():
                config=args.__dict__,
                name="[Prunus]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
+                    + "_adam"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -62,7 +64,8 @@ def main():
 
     param1 = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
     pre_opt = optim.SGD(param1, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    # optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.Adam(model.partition_switcher.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
@@ -196,9 +199,9 @@ def main():
 
             optimizer.zero_grad()
 
-            mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
-            svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
-            cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p)
+            mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p, tau=args.tau)
+            svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p, tau=args.tau)
+            cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p, tau=args.tau)
 
             mnist_label_loss = criterion(mnist_out_part, mnist_labels)
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
