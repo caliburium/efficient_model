@@ -18,7 +18,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=500)
-    parser.add_argument('--pretrain_epoch', type=int, default=1)
+    parser.add_argument('--pretrain_epoch', type=int, default=5)
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
@@ -35,10 +35,11 @@ def main():
     parser.add_argument('--fc_weight', type=float, default=1.0)
     parser.add_argument('--disc_weight', type=float, default=10)
     parser.add_argument('--switcher_weight', type=float, default=1.0)
+    parser.add_argument('--lr_switcher', type=float, default=1.0)
 
     # load pretrained model
-    # parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_pretrained_epoch_1.pth')
-    parser.add_argument('--pretrained_model', type=str, default=None)
+    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_pretrained_epoch_5.pth')
+    # parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
 
@@ -68,7 +69,7 @@ def main():
 
     param1 = prunus_weights(model, args.lr, args.pre_weight, args.fc_weight, args.disc_weight, args.switcher_weight)
     pre_opt = optim.SGD(param1, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.SGD(model.partition_switcher.parameters(), lr=args.lr_switcher, momentum=args.momentum, weight_decay=args.opt_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
 
@@ -234,7 +235,7 @@ def main():
             cifar_domain_loss = criterion(cifar_domain_out, cifar_dlabels)
             domain_loss = (mnist_domain_loss + svhn_domain_loss) * 0.5 + cifar_domain_loss
 
-            loss = label_loss * 1e8 + domain_loss
+            loss = label_loss * 1e7 + domain_loss
 
             loss.backward()
             # print model.partition_switcher's gradient and parameters
