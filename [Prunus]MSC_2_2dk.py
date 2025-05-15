@@ -224,6 +224,8 @@ def main():
             mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p)
             svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p)
             cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p)
+            # cifar_out_part, cifar_domain_out, cifar_part_idx = model.pretrain_fwd(1, cifar_images, alpha=lambda_p)
+
 
             mnist_label_loss = criterion(mnist_out_part, mnist_labels)
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)

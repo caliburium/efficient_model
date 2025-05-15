@@ -124,8 +124,9 @@ class Prunus(nn.Module):
         domain_output = self.discriminator_fc(domain_penul)
 
         partition_switcher_output = self.partition_switcher(domain_penul)
-        gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
-        partition_idx = torch.argmax(gumbel_output, dim=1)
+        gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=False)
+        partition_idx = torch.multinomial(gumbel_output, num_samples=1, replacement=True).squeeze(1)
+        # partition_idx = torch.argmax(gumbel_output, dim=1) # inference
         class_output = []
 
         for b_i in range(feature.size(0)):
