@@ -57,7 +57,7 @@ def main():
                config=args.__dict__,
                name="[Prunus]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
-                    + "_adam"
+                    + "_adam_CONTRASTIVE"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -226,11 +226,12 @@ def main():
             svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
             cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
+
             optimizer.zero_grad()
 
-            mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p, tau=args.init_tau)
-            svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p, tau=args.init_tau)
-            cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p, tau=args.init_tau)
+            mnist_out_part, mnist_domain_out, mnist_part_idx, mnist_dgumbel = model(mnist_images, alpha=lambda_p, tau=args.init_tau, contrastive=True)
+            svhn_out_part, svhn_domain_out, svhn_part_idx, svhn_dgumbel = model(svhn_images, alpha=lambda_p, tau=args.init_tau, contrastive=True)
+            cifar_out_part, cifar_domain_out, cifar_part_idx, cifar_dgumbel = model(cifar_images, alpha=lambda_p, tau=args.init_tau, contrastive=True)
             # mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p, tau=tau)
             # svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p, tau=tau)
             # cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p, tau=tau)
@@ -261,6 +262,32 @@ def main():
             print("loss: ", loss.item())
             print("===================================")
 
+            optimizer.step()
+
+            optimizer.zero_grad()
+            # column 1 goes column 0, column 0 goes column 1, so we need to sample from the negative distribution
+            mnist_dgumbel = torch.stack([mnist_dgumbel[:, 1], mnist_dgumbel[:, 0]]).T
+            svhn_dgumbel = torch.stack([svhn_dgumbel[:, 1], svhn_dgumbel[:, 0]]).T
+            cifar_dgumbel = torch.stack([cifar_dgumbel[:, 1], cifar_dgumbel[:, 0]]).T
+
+            mnist_dgumbel_contra = torch.multinomial(mnist_dgumbel, num_samples=1, replacement=True).squeeze(1)
+            svhn_dgumbel_contra = torch.multinomial(svhn_dgumbel, num_samples=1, replacement=True).squeeze(1)
+            cifar_dgumbel_contra = torch.multinomial(cifar_dgumbel, num_samples=1, replacement=True).squeeze(1)
+            
+                 
+            mnist_out_part, _, mnist_part_idx_contra = model.forward_with_defined_partition(
+                mnist_images, mnist_dgumbel_contra, alpha=lambda_p, tau=args.init_tau)
+            svhn_out_part, _, svhn_part_idx_contra = model.forward_with_defined_partition(
+                svhn_images, svhn_dgumbel_contra, alpha=lambda_p, tau=args.init_tau)
+            cifar_out_part, _, cifar_part_idx_contra = model.forward_with_defined_partition(
+                cifar_images, cifar_dgumbel_contra, alpha=lambda_p, tau=args.init_tau)
+            
+            #calculate loss
+            mnist_contra_loss = criterion(mnist_out_part, mnist_labels)
+            svhn_contra_loss = criterion(svhn_out_part, svhn_labels)
+            cifar_contra_loss = criterion(cifar_out_part, cifar_labels)
+            contra_loss = (mnist_contra_loss + svhn_contra_loss) * 0.5 + cifar_contra_loss
+            contra_loss.backward()
             optimizer.step()
 
             # count partition ratio

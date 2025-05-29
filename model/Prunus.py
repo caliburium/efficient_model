@@ -140,7 +140,7 @@ class Prunus(nn.Module):
 
         return class_output_partitioned, domain_output, partition_switcher_output
 
-    def forward(self, input_data, alpha=1.0, tau=0.1):
+    def forward(self, input_data, alpha=1.0, tau=0.1, contrastive = False):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
         feature = self.pre_classifier(feature)
@@ -171,7 +171,36 @@ class Prunus(nn.Module):
             self.sync_classifier_with_subnetworks()
         class_output_partitioned = torch.cat(class_output, dim=0)
         # class_output = self.classifier(feature)
+        if contrastive:
+            return class_output_partitioned, domain_output, partition_idx, gumbel_output
+        else:
+            
+            return class_output_partitioned, domain_output, partition_idx
+    
+    def forward_with_defined_partition(self, input_data, partition_idx,alpha=1.0, tau=0.1):
+        feature = self.features(input_data)
+        feature = feature.view(feature.size(0), -1)
+        feature = self.pre_classifier(feature)
 
+        reverse_feature = ReverseLayerF.apply(feature, alpha)
+        domain_penul = self.discriminator(reverse_feature)
+        domain_output = self.discriminator_fc(domain_penul)
+
+        # partition_idx = torch.argmax(gumbel_output, dim=1) # inference
+        class_output = []
+        for b_i in range(feature.size(0)):
+            xx_list = []
+            p_i = partition_idx[b_i].item()
+            xx = feature[b_i].unsqueeze(0)
+            for layer in self.partitioned_classifier[p_i]:
+                xx = layer(xx)
+            xx_list.append(xx)
+
+            stacked = torch.stack(xx_list, dim=0)
+        if self.training:
+            self.sync_classifier_with_subnetworks()
+        class_output_partitioned = torch.cat(class_output, dim=0)
+        # class_output = self.classifier(feature)
         return class_output_partitioned, domain_output, partition_idx
 
     def test(self, input_data, tau=0.1):

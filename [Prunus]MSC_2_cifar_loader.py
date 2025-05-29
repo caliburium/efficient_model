@@ -397,9 +397,9 @@ def main():
             print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}% | Partition Ratio: {partition_ratio_str}')
 
         with torch.no_grad():
-            tester(mnist_loader_test, 'MNIST', 0)
-            tester(svhn_loader_test, 'SVHN', 0)
-            tester(cifar_loader_test, 'CIFAR', 1)
+            tester(mnist_loader, 'MNIST', 0)
+            tester(svhn_loader, 'SVHN', 0)
+            tester(cifar_loader, 'CIFAR', 1)
 
 
 if __name__ == '__main__':
