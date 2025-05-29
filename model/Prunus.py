@@ -13,14 +13,15 @@ class Prunus(nn.Module):
 
         self.features = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-
             nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU()
         )
 
@@ -179,7 +180,8 @@ class Prunus(nn.Module):
         feature = feature.view(feature.size(0), -1)
         feature = self.pre_classifier(feature)
 
-        domain_penul = self.discriminator(feature)
+        reverse_feature = ReverseLayerF.apply(feature, 1.0)
+        domain_penul = self.discriminator(reverse_feature)
         domain_output = self.discriminator_fc(domain_penul)
 
         partition_switcher_output = self.partition_switcher(domain_penul)
