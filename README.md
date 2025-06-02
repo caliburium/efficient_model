@@ -1,6 +1,8 @@
  - Imagenette requires Pytorch 2.2.1 or later
  - deeplake < 4.0
 
+![net.png](net.png)
+
 | Target Domain \ Target Class |     Supervised     | Unsupervised |
 |:----------------------------:|:------------------:|:------------:|
 |    Without Discriminator     |   MultiSource NN   |     CNN      |

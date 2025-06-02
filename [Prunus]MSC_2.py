@@ -210,7 +210,8 @@ def main():
                 # 'scheduler_state_dict': scheduler.state_dict(),
             }, pretrained_model_dir)
             print(f"Pretrained model saved to {pretrained_model_dir}")
-            print("Pretraining done")
+            
+    print("Pretraining done")
 
     for epoch in range(num_epochs):
         start_time = time.time()
