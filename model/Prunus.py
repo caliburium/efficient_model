@@ -146,8 +146,9 @@ class Prunus(nn.Module):
         feature = feature.view(feature.size(0), -1)
         feature = self.pre_classifier(feature)
 
-        reverse_feature = ReverseLayerF.apply(feature, alpha)
-        domain_penul = self.discriminator(reverse_feature)
+        # reverse_feature = ReverseLayerF.apply(feature, alpha)
+        # domain_penul = self.discriminator(reverse_feature)
+        domain_penul = self.discriminator(feature)
         domain_output = self.discriminator_fc(domain_penul)
 
         partition_switcher_output = self.partition_switcher(domain_penul)
