@@ -35,8 +35,8 @@ def main():
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     parser.add_argument('--lr', type=float, default=0.1)
-    parser.add_argument('--ll_amp', type=int, default=1e9)
-    parser.add_argument('--dl_amp', type=int, default=1e9)
+    parser.add_argument('--ll_amp', type=int, default=1)
+    parser.add_argument('--dl_amp', type=int, default=1)
 
     # parameter lr amplifier
     parser.add_argument('--prefc_lr', type=float, default=1.0)
@@ -45,7 +45,8 @@ def main():
     parser.add_argument('--switcher_lr', type=float, default=10.0)
 
     # regularization
-    parser.add_argument('--reg_alpha', type=float, default=1e6)
+    parser.add_argument('--reg_alpha', type=float, default=10)
+    parser.add_argument('--reg_beta', type=float, default=1e3)
 
     # load pretrained model
     parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_10.pth')
@@ -294,7 +295,7 @@ def main():
             reg_cifar = torch.var(cifar_part_idx1.float())
             reg_loss = torch.var(dat_cat)
 
-            label_loss = svhn_label_loss + cifar_label_loss1 + args.reg_alpha *((-1)*reg_loss + reg_svhn + reg_cifar)
+            label_loss = svhn_label_loss + cifar_label_loss1 - args.reg_alpha * reg_loss + (reg_svhn + reg_cifar) * args.reg_beta
 
             # mnist_domain_loss = domain_criterion(mnist_domain_out, mnist_dlabels)
             svhn_domain_loss = domain_criterion(svhn_domain_out, svhn_dlabels)

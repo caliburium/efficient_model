@@ -35,8 +35,8 @@ def main():
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     parser.add_argument('--lr', type=float, default=0.1)
-    parser.add_argument('--ll_amp', type=int, default=1e9)
-    parser.add_argument('--dl_amp', type=int, default=1e9)
+    parser.add_argument('--ll_amp', type=int, default=1)
+    parser.add_argument('--dl_amp', type=int, default=1)
 
     # parameter lr amplifier
     parser.add_argument('--prefc_lr', type=float, default=1.0)
@@ -45,7 +45,8 @@ def main():
     parser.add_argument('--switcher_lr', type=float, default=10.0)
 
     # regularization
-    parser.add_argument('--reg_alpha', type=float, default=4)
+    parser.add_argument('--reg_alpha', type=float, default=10)
+    parser.add_argument('--reg_beta', type=float, default=1e3)
 
     # load pretrained model
     parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_10.pth')
@@ -60,7 +61,7 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model dk",
                config=args.__dict__,
-               name="[Prunus]SC_regularizer_lr:" + str(args.lr)
+               name="[Prunus]SC_regularizer2_in_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
                     + "_tau" + str(args.tau)
                     + "_PLayer:4096_Test"
@@ -284,15 +285,32 @@ def main():
             # mnist_label_loss = criterion(mnist_out_part, mnist_labels)
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
             cifar_label_loss1 = criterion(cifar_out_part1, cifar_labels1)
-            # cifar_label_loss2 = criterion(cifar_out_part2, cifar_labels2)
-            # label_loss = mnist_label_loss + svhn_label_loss + cifar_label_loss1 + cifar_label_loss2
+            # 두 평균값 사이의 거리(차이의 제곱)를 최대화하기 위해 음수를 취함
+            mean_svhn_idx = torch.mean(svhn_part_idx.float())
+            mean_cifar_idx = torch.mean(cifar_part_idx1.float())
+            separation_loss = -torch.pow(mean_svhn_idx - mean_cifar_idx, 2)
 
             dat_cat = torch.cat((svhn_part_idx, cifar_part_idx1))
             # as float
             dat_cat = dat_cat.float()
+            reg_svhn = torch.var(svhn_part_idx.float())
+            reg_cifar = torch.var(cifar_part_idx1.float())
             reg_loss = torch.var(dat_cat)
 
-            label_loss = svhn_label_loss + cifar_label_loss1 - args.reg_alpha * reg_loss
+            # 최종 Loss에 반영
+            # 기존 reg_loss 대신 separation_loss 사용
+            label_loss = svhn_label_loss + cifar_label_loss1 + \
+                        (reg_svhn + reg_cifar) * args.reg_beta + \
+                        args.reg_alpha * separation_loss # alpha로 가중치 조절
+
+            dat_cat = torch.cat((svhn_part_idx, cifar_part_idx1))
+            # as float
+            dat_cat = dat_cat.float()
+            reg_svhn = torch.var(svhn_part_idx.float())
+            reg_cifar = torch.var(cifar_part_idx1.float())
+            reg_loss = torch.var(dat_cat)
+
+            label_loss = svhn_label_loss + cifar_label_loss1 - args.reg_alpha * label_loss + (reg_svhn + reg_cifar) * args.reg_beta
 
             # mnist_domain_loss = domain_criterion(mnist_domain_out, mnist_dlabels)
             svhn_domain_loss = domain_criterion(svhn_domain_out, svhn_dlabels)
