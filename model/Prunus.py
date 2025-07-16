@@ -141,7 +141,7 @@ class Prunus(nn.Module):
 
         return class_output_partitioned, domain_output, partition_switcher_output
 
-    def forward(self, input_data, alpha=1.0, tau=0.1):
+    def forward(self, input_data, alpha=1.0, tau=0.1, return_partition_prob = False):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
         feature = self.pre_classifier(feature)
@@ -172,8 +172,10 @@ class Prunus(nn.Module):
             self.sync_classifier_with_subnetworks()
         class_output_partitioned = torch.cat(class_output, dim=0)
         class_output = self.classifier(feature)
-
-        return class_output_partitioned, domain_output, partition_idx
+        if return_partition_prob:
+            return class_output_partitioned, domain_output, partition_idx, gumbel_output
+        else:
+            return class_output_partitioned, domain_output, partition_idx
 
     def test(self, input_data, tau=0.1):
         feature = self.features(input_data)
@@ -208,6 +210,20 @@ class Prunus(nn.Module):
         return class_output_partitioned, domain_output, partition_idx
 
 
+class PrunusSigmoid(Prunus):
+    def __init__(self, num_classes=10, pre_classifier_out=1024, n_partition=2, part_layer=384, num_domains=2,
+                 device='cuda' if torch.cuda.is_available() else 'cpu'):
+        super(PrunusSigmoid, self).__init__(num_classes, pre_classifier_out, n_partition, part_layer, num_domains, device)
+
+
+        self.discriminator = nn.Sequential(
+            nn.Linear(pre_classifier_out, part_layer),
+            nn.BatchNorm1d(part_layer),
+            # nn.Tanh(),
+        )
+        self.create_partitioned_classifier()
+        self.sync_classifier_with_subnetworks()
+        self.to(self.device)
 
 def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0, switcher_weight=1.0):
 
