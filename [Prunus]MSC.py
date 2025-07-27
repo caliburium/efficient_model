@@ -16,7 +16,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=100)
+    parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--pretrain_epoch', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--num_partition', type=int, default=2)
@@ -34,19 +34,19 @@ def main():
     parser.add_argument('--pre_lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
-    parser.add_argument('--lr', type=float, default=0.1)
-    parser.add_argument('--ll_amp', type=int, default=1)
-    parser.add_argument('--dl_amp', type=int, default=1)
+    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--ll_amp', type=float, default=1)
+    parser.add_argument('--dl_amp', type=float, default=1)
 
     # parameter lr amplifier
     parser.add_argument('--prefc_lr', type=float, default=1.0)
     parser.add_argument('--fc_lr', type=float, default=1.0)
-    parser.add_argument('--disc_lr', type=float, default=10.0)
-    parser.add_argument('--switcher_lr', type=float, default=10.0)
+    parser.add_argument('--disc_lr', type=float, default=1.0)
+    parser.add_argument('--switcher_lr', type=float, default=1.0)
 
     # regularization
-    parser.add_argument('--reg_alpha', type=float, default=1)
-    parser.add_argument('--reg_beta', type=float, default=1)
+    parser.add_argument('--reg_alpha', type=float, default=0.01)
+    parser.add_argument('--reg_beta', type=float, default=0.1)
 
     # load pretrained model
     parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_10.pth')
@@ -219,7 +219,7 @@ def main():
         total_svhn_domain_loss, total_svhn_domain_correct, total_svhn_loss, total_svhn_correct = 0, 0, 0, 0
         total_cifar_domain_loss, total_cifar_domain_correct, total_cifar_loss, total_cifar_correct = 0, 0, 0, 0
         total_domain_loss, total_label_loss = 0, 0
-        total_reg_loss = 0
+        total_specialization_loss, total_diversity_loss, total_reg_loss = 0, 0, 0
 
         mnist_partition_counts = torch.zeros(args.num_partition, device=device)
         svhn_partition_counts = torch.zeros(args.num_partition, device=device)
@@ -278,23 +278,24 @@ def main():
             # 기존 reg_loss 대신 separation_loss 사용
 
             # 1. 각 데이터셋 내의 평균 확률 분포 계산
-            # numbers_part_gumbel = torch.cat((mnist_part_gumbel, svhn_part_gumbel))
-            # avg_prob_numbers = torch.mean(numbers_part_gumbel, dim=0)  # [M] 크기
-            avg_prob_mnist = torch.mean(mnist_part_gumbel, dim=0) # [M] 크기
-            avg_prob_svhn = torch.mean(svhn_part_gumbel, dim=0) # [M] 크기
+            numbers_part_gumbel = torch.cat((mnist_part_gumbel, svhn_part_gumbel))
+            avg_prob_numbers = torch.mean(numbers_part_gumbel, dim=0)  # [M] 크기
+            # avg_prob_mnist = torch.mean(mnist_part_gumbel, dim=0) # [M] 크기
+            # avg_prob_svhn = torch.mean(svhn_part_gumbel, dim=0) # [M] 크기
             avg_prob_cifar = torch.mean(cifar_part_gumbel, dim=0) # [M] 크기
 
             # 2. 각 데이터셋의 조건부 엔트로피 계산 (작을수록 좋음)
             # log(0)을 피하기 위해 작은 값(epsilon)을 더함
             epsilon = 1e-8
-            loss_specialization_mnist = -torch.sum(avg_prob_mnist * torch.log(avg_prob_mnist + epsilon))
-            loss_specialization_svhn = -torch.sum(avg_prob_svhn * torch.log(avg_prob_svhn + epsilon))
+            # loss_specialization_mnist = -torch.sum(avg_prob_mnist * torch.log(avg_prob_mnist + epsilon))
+            # loss_specialization_svhn = -torch.sum(avg_prob_svhn * torch.log(avg_prob_svhn + epsilon))
+            loss_specialization_numbers = -torch.sum(avg_prob_numbers * torch.log(avg_prob_numbers + epsilon))
             loss_specialization_cifar = -torch.sum(avg_prob_cifar * torch.log(avg_prob_cifar + epsilon))
 
             # 1. 전체 데이터셋의 평균 확률 분포 계산
-            # all_probs = torch.cat((numbers_part_gumbel, cifar_part_gumbel), dim=0)
-            # avg_prob_global = torch.mean(all_probs, dim=0)
-            avg_prob_global = (loss_specialization_mnist + loss_specialization_svhn + avg_prob_cifar) / 3
+            all_probs = torch.cat((numbers_part_gumbel, cifar_part_gumbel), dim=0)
+            avg_prob_global = torch.mean(all_probs, dim=0)
+            # avg_prob_global = (loss_specialization_mnist + loss_specialization_svhn + avg_prob_cifar) / 3
 
             # 2. 전체 엔트로피 계산 (클수록 좋음)
             loss_diversity = -torch.sum(avg_prob_global * torch.log(avg_prob_global + epsilon))
@@ -303,7 +304,8 @@ def main():
             loss_diversity = -loss_diversity
 
             # 최종 전문성 Loss
-            loss_specialization = loss_specialization_mnist + loss_specialization_svhn + loss_specialization_cifar
+            loss_specialization =  loss_specialization_numbers + loss_specialization_cifar
+            # loss_specialization = loss_specialization_mnist + loss_specialization_svhn + loss_specialization_cifar
 
             label_loss = (mnist_label_loss + svhn_label_loss + cifar_label_loss
                           + args.reg_alpha * loss_specialization + args.reg_beta * loss_diversity)
@@ -314,7 +316,8 @@ def main():
             domain_loss = (mnist_domain_loss + svhn_domain_loss) / 2 + cifar_domain_loss
 
             # loss = label_loss + domain_loss
-            loss = (label_loss * args.ll_amp) + (domain_loss * args.dl_amp)
+            # loss = (label_loss * args.ll_amp) + (domain_loss * args.dl_amp)
+            loss = label_loss
             loss.backward()
 
             entries = []
@@ -340,6 +343,9 @@ def main():
             total_mnist_loss += mnist_label_loss.item()
             total_svhn_loss += svhn_label_loss.item()
             total_cifar_loss += cifar_label_loss.item()
+
+            total_specialization_loss += loss_specialization.item()
+            total_diversity_loss += loss_diversity.item()
 
             total_domain_loss += domain_loss.item()
             total_mnist_domain_loss += mnist_domain_loss.item()
@@ -380,6 +386,9 @@ def main():
         svhn_avg_loss = total_svhn_loss / total_samples
         cifar_avg_loss = total_cifar_loss / total_samples
         label_avg_loss = total_label_loss / (total_samples * 3)
+
+        specialization_loss = total_specialization_loss / (total_samples * 3)
+        diversity_loss = total_diversity_loss / (total_samples * 3)
 
         mnist_acc_epoch = total_mnist_correct / total_samples * 100
         svhn_acc_epoch = total_svhn_correct / total_samples * 100
@@ -424,6 +433,8 @@ def main():
             'Train/SVHN Label Loss': svhn_avg_loss,
             'Train/CIFAR Label Loss': cifar_avg_loss,
             'Train/Label Loss': label_avg_loss,
+            'Train/Specialization Loss': specialization_loss,
+            'Train/Diversity Loss' : diversity_loss,
             'Train/Domain MNIST Loss': mnist_domain_avg_loss,
             'Train/Domain SVHN Loss': svhn_domain_avg_loss,
             'Train/Domain CIFAR Loss': cifar_domain_avg_loss,
@@ -436,7 +447,7 @@ def main():
             'Train/SVHN Domain Accuracy': svhn_domain_acc_epoch,
             'Train/CIFAR Domain Accuracy': cifar_domain_acc_epoch,
             'Train/Training Time': end_time - start_time,
-            'Train/Reg Loss': total_reg_loss / total_samples,
+            # 'Train/Reg Loss': total_reg_loss / total_samples,
         }, step=epoch + 1)
 
         model.eval()
@@ -454,8 +465,8 @@ def main():
                 label_correct += (torch.argmax(class_output_partitioned, dim=1) == labels).sum().item()
                 domain_correct += (torch.argmax(domain_output, dim=1) == domain_label).sum().item()
                 partition_counts += torch.bincount(partition_idx, minlength=args.num_partition)
-                reg_loss = torch.var(partition_idx.float())
-                total_reg_loss += reg_loss.item()
+                # reg_loss = torch.var(partition_idx.float())
+                # total_reg_loss += reg_loss.item()
 
             label_acc = label_correct / total * 100
             domain_acc = domain_correct / total * 100
@@ -467,7 +478,7 @@ def main():
                 f'Test/Label {group} Accuracy': label_acc,
                 f'Test/Domain {group} Accuracy': domain_acc,
                 **{f"Test/{group} Partition {p} Ratio": partition_ratios[p].item() for p in range(args.num_partition)},
-                f'Test/Reg Loss {group}': total_reg_loss / total,
+                # f'Test/Reg Loss {group}': total_reg_loss / total,
             }, step=epoch + 1)
 
             print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}% | Partition Ratio: {partition_ratio_str}')
