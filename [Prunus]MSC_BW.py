@@ -49,7 +49,7 @@ def main():
     parser.add_argument('--reg_beta', type=float, default=0.1)
 
     # load pretrained model
-    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_10.pth')
+    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_bw_pretrained_epoch_10.pth')
     # parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
@@ -61,10 +61,10 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model",
                config=args.__dict__,
-               name="[Prunus]MSC_specialization_in_lr:" + str(args.lr)
+               name="[Prunus]MSC_BW_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
                     + "_tau" + str(args.tau)
-                    + "_PLayer:4096_(all_probs=1:1:1)"
+                    + "_PLayer:4096"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -83,10 +83,10 @@ def main():
     # tau_scheduler = GumbelTauScheduler(initial_tau=args.init_tau, min_tau=args.min_tau, decay_rate=args.tau_decay)
     param = prunus_weights(model, args.pre_lr, args.prefc_lr, args.fc_lr, args.disc_lr, args.switcher_lr)
     pre_opt = optim.SGD(param, lr=args.pre_lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    optimizer = optim.Adam(model.partition_switcher.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-    w_src, w_tgt = 1.0, 2.0
+    w_src, w_tgt = 2.0, 1.0
     domain_criterion = nn.CrossEntropyLoss(weight=torch.tensor([w_src, w_tgt], device=device))
     criterion = nn.CrossEntropyLoss()
 
@@ -99,7 +99,7 @@ def main():
         print("Done")
     else:
         for epoch in range(pre_epochs):
-            pretrained_model_dir = f"pretrained_model/Prunus4096_pretrained_epoch_{epoch + 1}.pth"
+            pretrained_model_dir = f"pretrained_model/Prunus_bw_pretrained_epoch_{epoch + 1}.pth"
             os.makedirs(os.path.dirname(pretrained_model_dir), exist_ok=True)
             model.train()
             i = 0
@@ -122,12 +122,12 @@ def main():
                 cifar_images, cifar_labels = cifar_data
                 cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
                 mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
-                svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
+                svhn_dlabels = torch.full((svhn_images.size(0),), 1, dtype=torch.long, device=device)
                 cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
                 pre_opt.zero_grad()
                 mnist_out_partition, mnist_domain_out, _ = model.pretrain(0, mnist_images, alpha=lambda_p)
-                svhn_out_partition, svhn_domain_out, _ = model.pretrain(0, svhn_images, alpha=lambda_p)
+                svhn_out_partition, svhn_domain_out, _ = model.pretrain(1, svhn_images, alpha=lambda_p)
                 cifar_out_partition, cifar_domain_out, _ = model.pretrain(1, cifar_images, alpha=lambda_p)
 
                 mnist_loss = criterion(mnist_out_partition, mnist_labels)
@@ -237,7 +237,7 @@ def main():
             cifar_images, cifar_labels = cifar_data
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
             mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
-            svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
+            svhn_dlabels = torch.full((svhn_images.size(0),), 1, dtype=torch.long, device=device)
             cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
@@ -261,51 +261,19 @@ def main():
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
             cifar_label_loss = criterion(cifar_out_part, cifar_labels)
 
-            # 두 평균값 사이의 거리(차이의 제곱)를 최대화하기 위해 음수를 취함
-            # numbers_idx = torch.cat((mnist_part_idx, cifar_part_idx))
-            # mean_numbers_idx = torch.mean(numbers_idx.float())
-            # mean_cifar_idx = torch.mean(cifar_part_idx.float())
-            # separation_loss = -torch.pow(mean_numbers_idx - mean_cifar_idx, 2)
+            rgb_part_gumbel = torch.cat((svhn_part_gumbel, cifar_part_gumbel))
+            avg_prob_rgb = torch.mean(rgb_part_gumbel, dim=0)  # [M] 크기
+            avg_prob_mnist = torch.mean(mnist_part_gumbel, dim=0) # [M] 크기
 
-            # dat_cat = torch.cat((numbers_idx, cifar_part_idx))
-            # dat_cat = dat_cat.float()
-
-            # reg_numbers = torch.var(numbers_idx.float())
-            # reg_cifar = torch.var(cifar_part_idx.float())
-            # reg_loss = torch.var(dat_cat)
-
-            # 최종 Loss에 반영
-            # 기존 reg_loss 대신 separation_loss 사용
-
-            # 1. 각 데이터셋 내의 평균 확률 분포 계산
-            numbers_part_gumbel = torch.cat((mnist_part_gumbel, svhn_part_gumbel))
-            avg_prob_numbers = torch.mean(numbers_part_gumbel, dim=0)  # [M] 크기
-            # avg_prob_mnist = torch.mean(mnist_part_gumbel, dim=0) # [M] 크기
-            # avg_prob_svhn = torch.mean(svhn_part_gumbel, dim=0) # [M] 크기
-            avg_prob_cifar = torch.mean(cifar_part_gumbel, dim=0) # [M] 크기
-
-            # 2. 각 데이터셋의 조건부 엔트로피 계산 (작을수록 좋음)
-            # log(0)을 피하기 위해 작은 값(epsilon)을 더함
             epsilon = 1e-8
-            # loss_specialization_mnist = -torch.sum(avg_prob_mnist * torch.log(avg_prob_mnist + epsilon))
-            # loss_specialization_svhn = -torch.sum(avg_prob_svhn * torch.log(avg_prob_svhn + epsilon))
-            loss_specialization_numbers = -torch.sum(avg_prob_numbers * torch.log(avg_prob_numbers + epsilon))
-            loss_specialization_cifar = -torch.sum(avg_prob_cifar * torch.log(avg_prob_cifar + epsilon))
+            loss_specialization_rgb = -torch.sum(avg_prob_rgb * torch.log(avg_prob_rgb + epsilon))
+            loss_specialization_mnist = -torch.sum(avg_prob_mnist * torch.log(avg_prob_mnist + epsilon))
+            loss_specialization =  loss_specialization_rgb + loss_specialization_mnist
 
-            # 1. 전체 데이터셋의 평균 확률 분포 계산
-            all_probs = torch.cat((numbers_part_gumbel, cifar_part_gumbel), dim=0)
+            all_probs = torch.cat((rgb_part_gumbel, mnist_part_gumbel), dim=0)
             avg_prob_global = torch.mean(all_probs, dim=0)
-            # avg_prob_global = (loss_specialization_mnist + loss_specialization_svhn + avg_prob_cifar) / 3
-
-            # 2. 전체 엔트로피 계산 (클수록 좋음)
             loss_diversity = -torch.sum(avg_prob_global * torch.log(avg_prob_global + epsilon))
-
-            # Loss로 사용하기 위해 음수를 취함 (즉, 엔트로피를 최대화)
             loss_diversity = -loss_diversity
-
-            # 최종 전문성 Loss
-            loss_specialization =  loss_specialization_numbers + loss_specialization_cifar
-            # loss_specialization = loss_specialization_mnist + loss_specialization_svhn + loss_specialization_cifar
 
             label_loss = (mnist_label_loss + svhn_label_loss + cifar_label_loss
                           + args.reg_alpha * loss_specialization + args.reg_beta * loss_diversity)
@@ -313,7 +281,7 @@ def main():
             mnist_domain_loss = domain_criterion(mnist_domain_out, mnist_dlabels)
             svhn_domain_loss = domain_criterion(svhn_domain_out, svhn_dlabels)
             cifar_domain_loss = domain_criterion(cifar_domain_out, cifar_dlabels)
-            domain_loss = (mnist_domain_loss + svhn_domain_loss) / 2 + cifar_domain_loss
+            domain_loss = mnist_domain_loss + (svhn_domain_loss + cifar_domain_loss) / 2
 
             # loss = label_loss + domain_loss
             # loss = (label_loss * args.ll_amp) + (domain_loss * args.dl_amp)
@@ -329,7 +297,6 @@ def main():
                 data_str = f"{torch.mean(torch.abs(param.data)).item():.4f}"
                 entries.append(f"{name}: {grad_str}, {data_str}")
 
-            # print(" | ".join(entries) + f" | loss: {loss.item():.4f} | reg_loss: {reg_loss.item():.4f}")
             print(" | ".join(entries) + f" | loss: {loss.item():.4f} ")
 
             optimizer.step()
@@ -454,7 +421,6 @@ def main():
 
         def tester(loader, group, domain_label):
             label_correct, domain_correct, total = 0, 0, 0
-            total_reg_loss = 0
             partition_counts = torch.zeros(args.num_partition, device=device)
             for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
@@ -465,8 +431,6 @@ def main():
                 label_correct += (torch.argmax(class_output_partitioned, dim=1) == labels).sum().item()
                 domain_correct += (torch.argmax(domain_output, dim=1) == domain_label).sum().item()
                 partition_counts += torch.bincount(partition_idx, minlength=args.num_partition)
-                # reg_loss = torch.var(partition_idx.float())
-                # total_reg_loss += reg_loss.item()
 
             label_acc = label_correct / total * 100
             domain_acc = domain_correct / total * 100
@@ -485,7 +449,7 @@ def main():
 
         with torch.no_grad():
             tester(mnist_loader_test, 'MNIST', 0)
-            tester(svhn_loader_test, 'SVHN', 0)
+            tester(svhn_loader_test, 'SVHN', 1)
             tester(cifar_loader_test, 'CIFAR', 1)
 
 

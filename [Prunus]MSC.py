@@ -4,7 +4,7 @@ import os
 import torch.nn as nn
 import torch.optim as optim
 # from functions.lr_lambda import lr_lambda
-# from functions.GumbelTauScheduler import GumbelTauScheduler
+from functions.GumbelTauScheduler import GumbelTauScheduler
 from model.Prunus import Prunus, prunus_weights
 from dataloader.data_loader import data_loader
 import numpy as np
@@ -16,8 +16,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--pretrain_epoch', type=int, default=10)
+    parser.add_argument('--epoch', type=int, default=100)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
@@ -49,8 +49,8 @@ def main():
     parser.add_argument('--reg_beta', type=float, default=0.1)
 
     # load pretrained model
-    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_10.pth')
-    # parser.add_argument('--pretrained_model', type=str, default=None)
+    # parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_10.pth')
+    parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
 
@@ -61,10 +61,10 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model",
                config=args.__dict__,
-               name="[Prunus]MSC_specialization_in_lr:" + str(args.lr)
+               name="[Prunus]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
                     + "_tau" + str(args.tau)
-                    + "_PLayer:4096_(all_probs=1:1:1)"
+                    + "_PLayer:4096"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -83,7 +83,8 @@ def main():
     # tau_scheduler = GumbelTauScheduler(initial_tau=args.init_tau, min_tau=args.min_tau, decay_rate=args.tau_decay)
     param = prunus_weights(model, args.pre_lr, args.prefc_lr, args.fc_lr, args.disc_lr, args.switcher_lr)
     pre_opt = optim.SGD(param, lr=args.pre_lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    optimizer = optim.Adam(model.partition_switcher.parameters(), lr=args.lr)
+    optimizer = pre_opt
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr)
     # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     w_src, w_tgt = 1.0, 2.0
@@ -245,9 +246,9 @@ def main():
             mnist_out_part, mnist_domain_out, mnist_part_idx, mnist_part_gumbel = model(mnist_images, alpha=lambda_p, tau=args.tau, return_partition_prob=True)
             svhn_out_part, svhn_domain_out, svhn_part_idx, svhn_part_gumbel = model(svhn_images, alpha=lambda_p, tau=args.tau, return_partition_prob=True)
             cifar_out_part, cifar_domain_out, cifar_part_idx, cifar_part_gumbel = model(cifar_images, alpha=lambda_p, tau=args.tau, return_partition_prob=True)
-            # mnist_out_part, mnist_domain_out, mnist_part_idx = model(mnist_images, alpha=lambda_p, tau=tau)
-            # svhn_out_part, svhn_domain_out, svhn_part_idx = model(svhn_images, alpha=lambda_p, tau=tau)
-            # cifar_out_part, cifar_domain_out, cifar_part_idx = model(cifar_images, alpha=lambda_p, tau=tau)
+            # mnist_out_part, mnist_domain_out, mnist_part_idx, mnist_part_gumbel = model(mnist_images, alpha=lambda_p, tau=tau, return_partition_prob=True)
+            # svhn_out_part, svhn_domain_out, svhn_part_idx, svhn_part_gumbel = model(svhn_images, alpha=lambda_p, tau=tau, return_partition_prob=True)
+            # cifar_out_part, cifar_domain_out, cifar_part_idx, cifar_part_gumbel = model(cifar_images, alpha=lambda_p, tau=tau, return_partition_prob=True)
 
             if i % 1 == 0:
                 print(f"--- [Epoch {epoch + 1}, Batch {i}] Partition Stats ---")
