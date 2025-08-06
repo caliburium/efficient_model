@@ -5,3 +5,4 @@
 .vscode/launch.json
 
 /.idea/
+/pretrained_model/

@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--pre_lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--ll_amp', type=float, default=1)
     parser.add_argument('--dl_amp', type=float, default=1)
 
@@ -49,8 +49,8 @@ def main():
     parser.add_argument('--reg_beta', type=float, default=0.1)
 
     # load pretrained model
-    # parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_10.pth')
-    parser.add_argument('--pretrained_model', type=str, default=None)
+    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_1.pth')
+    # parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
 
@@ -82,9 +82,8 @@ def main():
 
     # tau_scheduler = GumbelTauScheduler(initial_tau=args.init_tau, min_tau=args.min_tau, decay_rate=args.tau_decay)
     param = prunus_weights(model, args.pre_lr, args.prefc_lr, args.fc_lr, args.disc_lr, args.switcher_lr)
-    pre_opt = optim.SGD(param, lr=args.pre_lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    optimizer = pre_opt
-    # optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    pre_opt = optim.SGD(model.parameters(), lr=args.pre_lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.Adam(param, lr=args.lr)
     # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     w_src, w_tgt = 1.0, 2.0
@@ -110,7 +109,6 @@ def main():
             total_cifar_loss, total_cifar_correct, total_cifar_domain_loss, total_cifar_domain_correct = 0, 0, 0, 0
             total_label_loss, total_domain_loss, total_samples = 0, 0, 0
 
-            # for mnist_data, svhn_data, cifar_data1, cifar_data2 in zip(mnist_loader, svhn_loader, cifar_loader1, cifar_loader2):
             for mnist_data, svhn_data, cifar_data in zip(mnist_loader, svhn_loader, cifar_loader):
                 p = epoch / num_epochs
                 lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
@@ -220,7 +218,7 @@ def main():
         total_svhn_domain_loss, total_svhn_domain_correct, total_svhn_loss, total_svhn_correct = 0, 0, 0, 0
         total_cifar_domain_loss, total_cifar_domain_correct, total_cifar_loss, total_cifar_correct = 0, 0, 0, 0
         total_domain_loss, total_label_loss = 0, 0
-        total_specialization_loss, total_diversity_loss, total_reg_loss = 0, 0, 0
+        total_specialization_loss, total_diversity_loss = 0, 0
 
         mnist_partition_counts = torch.zeros(args.num_partition, device=device)
         svhn_partition_counts = torch.zeros(args.num_partition, device=device)
@@ -256,7 +254,7 @@ def main():
                 svhn_counts = torch.bincount(svhn_part_idx, minlength=args.num_partition)
                 cifar_counts = torch.bincount(cifar_part_idx, minlength=args.num_partition)
                 print(f"MNIST : {mnist_counts.cpu().numpy()} / SVHN  : {svhn_counts.cpu().numpy()} / CIFAR : {cifar_counts.cpu().numpy()}")
-                print(f"Switcher Weight Mean: {model.partition_switcher.weight.data.mean():.4f}, Bias Mean: {model.partition_switcher.bias.data.mean():.4f}")
+                print(f"Switcher Weight Mean: {model.partition_switcher.weight.data.mean():.8f}, Bias Mean: {model.partition_switcher.bias.data.mean():.8f}")
 
             mnist_label_loss = criterion(mnist_out_part, mnist_labels)
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
@@ -299,13 +297,10 @@ def main():
             # avg_prob_global = (loss_specialization_mnist + loss_specialization_svhn + avg_prob_cifar) / 3
 
             # 2. 전체 엔트로피 계산 (클수록 좋음)
-            loss_diversity = -torch.sum(avg_prob_global * torch.log(avg_prob_global + epsilon))
-
-            # Loss로 사용하기 위해 음수를 취함 (즉, 엔트로피를 최대화)
-            loss_diversity = -loss_diversity
+            loss_diversity = torch.sum(avg_prob_global * torch.log(avg_prob_global + epsilon))
 
             # 최종 전문성 Loss
-            loss_specialization =  loss_specialization_numbers + loss_specialization_cifar
+            loss_specialization = loss_specialization_numbers + loss_specialization_cifar
             # loss_specialization = loss_specialization_mnist + loss_specialization_svhn + loss_specialization_cifar
 
             label_loss = (mnist_label_loss + svhn_label_loss + cifar_label_loss
@@ -316,9 +311,9 @@ def main():
             cifar_domain_loss = domain_criterion(cifar_domain_out, cifar_dlabels)
             domain_loss = (mnist_domain_loss + svhn_domain_loss) / 2 + cifar_domain_loss
 
-            # loss = label_loss + domain_loss
+            loss = label_loss + domain_loss
             # loss = (label_loss * args.ll_amp) + (domain_loss * args.dl_amp)
-            loss = label_loss
+            # loss = label_loss
             loss.backward()
 
             entries = []
@@ -326,12 +321,12 @@ def main():
                 if param.grad is None:
                     grad_str = 'None'
                 else:
-                    grad_str = f"{torch.mean(torch.abs(param.grad)).item():.4f}"
-                data_str = f"{torch.mean(torch.abs(param.data)).item():.4f}"
+                    grad_str = f"{torch.mean(torch.abs(param.grad)).item():.6f}"
+                data_str = f"{torch.mean(torch.abs(param.data)).item():.6f}"
                 entries.append(f"{name}: {grad_str}, {data_str}")
 
             # print(" | ".join(entries) + f" | loss: {loss.item():.4f} | reg_loss: {reg_loss.item():.4f}")
-            print(" | ".join(entries) + f" | loss: {loss.item():.4f} ")
+            print(" | ".join(entries) + f" | loss: {loss.item():.6f} ")
 
             optimizer.step()
 
@@ -360,7 +355,6 @@ def main():
             total_mnist_domain_correct += (torch.argmax(mnist_domain_out, dim=1) == mnist_dlabels).sum().item()
             total_svhn_domain_correct += (torch.argmax(svhn_domain_out, dim=1) == svhn_dlabels).sum().item()
             total_cifar_domain_correct += ((torch.argmax(cifar_domain_out, dim=1) == cifar_dlabels).sum().item())
-            # total_reg_loss += reg_loss.item()
 
             total_samples += svhn_labels.size(0)
 
@@ -408,6 +402,9 @@ def main():
               f'Domain Loss: {domain_avg_loss:.4f} | '
               f'Total Loss: {label_avg_loss + domain_avg_loss:.4f} | '
               f'Time: {end_time - start_time:.2f} sec | '
+        )
+        print(f'Specialization Loss {specialization_loss} | '
+              f'Diversity Loss {diversity_loss} | '
         )
         print(
               f'MNIST Loss: {mnist_avg_loss:.4f} | '
