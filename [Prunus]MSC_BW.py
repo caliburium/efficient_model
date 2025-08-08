@@ -16,8 +16,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--pretrain_epoch', type=int, default=10)
+    parser.add_argument('--epoch', type=int, default=100)
+    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--pre_lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--ll_amp', type=float, default=1)
     parser.add_argument('--dl_amp', type=float, default=1)
 
@@ -49,8 +49,8 @@ def main():
     parser.add_argument('--reg_beta', type=float, default=0.1)
 
     # load pretrained model
-    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_bw_pretrained_epoch_10.pth')
-    # parser.add_argument('--pretrained_model', type=str, default=None)
+    # parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus_bw_pretrained_epoch_10.pth')
+    parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
 
@@ -268,12 +268,11 @@ def main():
             epsilon = 1e-8
             loss_specialization_rgb = -torch.sum(avg_prob_rgb * torch.log(avg_prob_rgb + epsilon))
             loss_specialization_mnist = -torch.sum(avg_prob_mnist * torch.log(avg_prob_mnist + epsilon))
-            loss_specialization =  loss_specialization_rgb + loss_specialization_mnist
+            loss_specialization = loss_specialization_rgb + loss_specialization_mnist
 
             all_probs = torch.cat((rgb_part_gumbel, mnist_part_gumbel), dim=0)
             avg_prob_global = torch.mean(all_probs, dim=0)
-            loss_diversity = -torch.sum(avg_prob_global * torch.log(avg_prob_global + epsilon))
-            loss_diversity = -loss_diversity
+            loss_diversity = torch.sum(avg_prob_global * torch.log(avg_prob_global + epsilon))
 
             label_loss = (mnist_label_loss + svhn_label_loss + cifar_label_loss
                           + args.reg_alpha * loss_specialization + args.reg_beta * loss_diversity)
@@ -281,11 +280,11 @@ def main():
             mnist_domain_loss = domain_criterion(mnist_domain_out, mnist_dlabels)
             svhn_domain_loss = domain_criterion(svhn_domain_out, svhn_dlabels)
             cifar_domain_loss = domain_criterion(cifar_domain_out, cifar_dlabels)
-            domain_loss = mnist_domain_loss + (svhn_domain_loss + cifar_domain_loss) / 2
+            domain_loss = mnist_domain_loss + svhn_domain_loss + cifar_domain_loss
 
-            # loss = label_loss + domain_loss
+            loss = label_loss + domain_loss
             # loss = (label_loss * args.ll_amp) + (domain_loss * args.dl_amp)
-            loss = label_loss
+            # loss = label_loss
             loss.backward()
 
             entries = []
@@ -326,7 +325,6 @@ def main():
             total_mnist_domain_correct += (torch.argmax(mnist_domain_out, dim=1) == mnist_dlabels).sum().item()
             total_svhn_domain_correct += (torch.argmax(svhn_domain_out, dim=1) == svhn_dlabels).sum().item()
             total_cifar_domain_correct += ((torch.argmax(cifar_domain_out, dim=1) == cifar_dlabels).sum().item())
-            # total_reg_loss += reg_loss.item()
 
             total_samples += svhn_labels.size(0)
 
@@ -414,7 +412,6 @@ def main():
             'Train/SVHN Domain Accuracy': svhn_domain_acc_epoch,
             'Train/CIFAR Domain Accuracy': cifar_domain_acc_epoch,
             'Train/Training Time': end_time - start_time,
-            # 'Train/Reg Loss': total_reg_loss / total_samples,
         }, step=epoch + 1)
 
         model.eval()
@@ -442,7 +439,6 @@ def main():
                 f'Test/Label {group} Accuracy': label_acc,
                 f'Test/Domain {group} Accuracy': domain_acc,
                 **{f"Test/{group} Partition {p} Ratio": partition_ratios[p].item() for p in range(args.num_partition)},
-                # f'Test/Reg Loss {group}': total_reg_loss / total,
             }, step=epoch + 1)
 
             print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}% | Partition Ratio: {partition_ratio_str}')
