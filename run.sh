@@ -1,3 +1,10 @@
-python '[Prunus]MSC_2_toctook.py' 
-python '[Prunus]MSC_2_toctook.py' --part_layer 10000
-
+python '[Prunus]MSC.py'
+python '[Prunus]MSC_BW.py'
+python '[Prunus]MSC.py'
+python '[Prunus]MSC_BW.py'
+python '[Prunus]MSC.py'
+python '[Prunus]MSC_BW.py'
+python '[Prunus]MSC.py'
+python '[Prunus]MSC_BW.py'
+python '[Prunus]MSC.py'
+python '[Prunus]MSC_BW.py'

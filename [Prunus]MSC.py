@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--pre_lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
-    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--ll_amp', type=float, default=1)
     parser.add_argument('--dl_amp', type=float, default=1)
 
@@ -49,8 +49,8 @@ def main():
     parser.add_argument('--reg_beta', type=float, default=0.1)
 
     # load pretrained model
-    parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_1.pth')
-    # parser.add_argument('--pretrained_model', type=str, default=None)
+    # parser.add_argument('--pretrained_model', type=str, default='pretrained_model/Prunus4096_pretrained_epoch_1.pth')
+    parser.add_argument('--pretrained_model', type=str, default=None)
 
     args = parser.parse_args()
 
