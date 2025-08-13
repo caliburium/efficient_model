@@ -12,9 +12,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=100)
-    parser.add_argument('--batch_size', type=int, default=200)
+    parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--hidden_size', type=int, default=256)
+    parser.add_argument('--hidden_size', type=int, default=2048)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     args = parser.parse_args()
@@ -34,7 +34,8 @@ def main():
     print("Data load complete, start training")
 
     model = SimpleCNN(num_classes=10, hidden_size=args.hidden_size).to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
@@ -59,7 +60,7 @@ def main():
             mnist_loss = criterion(mnist_outputs, mnist_labels)
             svhn_loss = criterion(svhn_outputs, svhn_labels)
             cifar10_loss = criterion(cifar10_outputs, cifar10_labels)
-            loss = (mnist_loss + svhn_loss) * 0.5 + cifar10_loss
+            loss = mnist_loss + svhn_loss + cifar10_loss
 
             # Backward and optimize
             optimizer.zero_grad()
