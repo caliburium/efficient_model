@@ -114,117 +114,56 @@ class Prunus(nn.Module):
                 linear_layer.weight = nn.Parameter(ws_.detach().clone())
                 linear_layer.bias = nn.Parameter(bs_.detach().clone())
 
-
-    def pretrain(self, pindex_in, input_data, alpha):
+    def forward(self, input_data, alpha=1.0, tau=0.1, inference=False):
         feature = self.features(input_data)
         feature = feature.view(feature.size(0), -1)
-
         feature = self.pre_classifier(feature)
+
         reverse_feature = ReverseLayerF.apply(feature, alpha)
         domain_penul = self.discriminator(reverse_feature)
         domain_output = self.discriminator_fc(domain_penul)
-        partition_switcher_output = self.partition_switcher(domain_penul)
-
-        partition_idx = torch.full((partition_switcher_output.size(0),), pindex_in, dtype=torch.long, device=domain_penul.device)
-
-        class_output = []
-
-        for b_i in range(feature.size(0)):
-            xx = feature[b_i].unsqueeze(0)
-            for layer in self.partitioned_classifier[partition_idx[b_i]]:
-                xx = layer(xx)
-            class_output.append(xx)
-
-        if self.training:
-            self.sync_classifier_with_subnetworks()
-        class_output_partitioned = torch.cat(class_output, dim=0)
-
-        return class_output_partitioned, domain_output, partition_switcher_output
-
-    def forward(self, input_data, alpha=1.0, tau=0.1, return_partition_prob = False):
-        feature = self.features(input_data)
-        feature = feature.view(feature.size(0), -1)
-        feature = self.pre_classifier(feature)
-
-        # reverse_feature = ReverseLayerF.apply(feature, alpha)
-        # domain_penul = self.discriminator(reverse_feature)
-        domain_penul = self.discriminator(feature)
-        domain_output = self.discriminator_fc(domain_penul)
 
         partition_switcher_output = self.partition_switcher(domain_penul)
-        gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=False)
-        partition_idx = torch.multinomial(gumbel_output, num_samples=1, replacement=True).squeeze(1)
-        # partition_idx = torch.argmax(gumbel_output, dim=1) # inference
-        class_output = []
 
-        for b_i in range(feature.size(0)):
-            xx_list = []
-            p_i = partition_idx[b_i].item()
-            xx = feature[b_i].unsqueeze(0)
+        # hard=True를 사용하면 gumbel_output이 one-hot 벡터가 되어 라우팅이 명확해집니다.
+        # Straight-Through Estimator 덕분에 그래디언트는 스위처로 잘 전달됩니다.
+        gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
+
+        # 각 데이터 샘플이 어떤 파티션으로 갈지 결정합니다.
+        partition_idx = torch.argmax(gumbel_output, dim=1)
+
+        # 최종 출력을 담을 빈 텐서를 생성합니다.
+        class_output_partitioned = torch.zeros(feature.size(0), self.classifier[-1].out_features, device=self.device)
+
+        # for 루프를 배치 크기만큼 돌지 않고, 파티션 개수(n_partition)만큼만 돕니다.
+        for p_i in range(self.n_partition):
+            # p_i번 파티션으로 할당된 데이터들의 인덱스를 찾습니다.
+            indices = torch.where(partition_idx == p_i)[0]
+
+            # 이 파티션에 할당된 데이터가 없으면 건너뜁니다.
+            if len(indices) == 0:
+                continue
+
+            # 해당 인덱스의 데이터(feature)들만 모읍니다.
+            selected_features = feature[indices]
+
+            # 선택된 데이터들을 p_i번 파티션 네트워크에 '한 번에' 통과시킵니다.
+            xx = selected_features
             for layer in self.partitioned_classifier[p_i]:
                 xx = layer(xx)
-            xx_list.append(xx)
 
-            stacked = torch.stack(xx_list, dim=0)  # [n_partition, 1, num_classes]
-            weighted = torch.sum(gumbel_output[b_i].view(-1, 1, 1) * stacked, dim=0)
-            class_output.append(weighted)
+            # 계산된 결과를 최종 출력 텐서의 원래 위치에 맞게 다시 채워 넣습니다.
+            class_output_partitioned[indices] = xx
 
         if self.training:
             self.sync_classifier_with_subnetworks()
-        class_output_partitioned = torch.cat(class_output, dim=0)
+
+        # 이 'class_output'은 sync 확인 및 디버깅용으로 남겨둘 수 있으나,
+        # 실제 학습에는 class_output_partitioned를 사용해야 합니다.
         class_output = self.classifier(feature)
-        if return_partition_prob:
-            return class_output_partitioned, domain_output, partition_idx, gumbel_output
-        else:
-            return class_output_partitioned, domain_output, partition_idx
 
-    def test(self, input_data, tau=0.1):
-        feature = self.features(input_data)
-        feature = feature.view(feature.size(0), -1)
-        feature = self.pre_classifier(feature)
+        return class_output_partitioned, domain_output, partition_idx, gumbel_output
 
-        reverse_feature = ReverseLayerF.apply(feature, 1.0)
-        domain_penul = self.discriminator(reverse_feature)
-        domain_output = self.discriminator_fc(domain_penul)
-
-        partition_switcher_output = self.partition_switcher(domain_penul)
-        gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=False)
-        partition_idx = torch.argmax(gumbel_output, dim=1) # inference
-        class_output = []
-
-        for b_i in range(feature.size(0)):
-            xx_list = []
-            p_i = partition_idx[b_i].item()
-            xx = feature[b_i].unsqueeze(0)
-            for layer in self.partitioned_classifier[p_i]:
-                xx = layer(xx)
-            xx_list.append(xx)
-
-            stacked = torch.stack(xx_list, dim=0)  # [n_partition, 1, num_classes]
-            weighted = torch.sum(gumbel_output[b_i].view(-1, 1, 1) * stacked, dim=0)
-            class_output.append(weighted)
-
-        if self.training:
-            self.sync_classifier_with_subnetworks()
-        class_output_partitioned = torch.cat(class_output, dim=0)
-
-        return class_output_partitioned, domain_output, partition_idx
-
-
-class PrunusSigmoid(Prunus):
-    def __init__(self, num_classes=10, pre_classifier_out=1024, n_partition=2, part_layer=384, num_domains=2,
-                 device='cuda' if torch.cuda.is_available() else 'cpu'):
-        super(PrunusSigmoid, self).__init__(num_classes, pre_classifier_out, n_partition, part_layer, num_domains, device)
-
-
-        self.discriminator = nn.Sequential(
-            nn.Linear(pre_classifier_out, part_layer),
-            nn.BatchNorm1d(part_layer),
-            # nn.Tanh(),
-        )
-        self.create_partitioned_classifier()
-        self.sync_classifier_with_subnetworks()
-        self.to(self.device)
 
 def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0, switcher_weight=1.0):
 
