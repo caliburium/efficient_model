@@ -53,8 +53,8 @@ def main():
                config=args.__dict__,
                name="[Prunus]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
-                    + "_tau" + str(args.init_tau)
-                    + "_PLayer:4096"
+                    + "_tau:" + str(args.init_tau)
+                    + "_PLayer:" + str(args.part_layer)
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)

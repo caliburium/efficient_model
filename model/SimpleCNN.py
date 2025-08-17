@@ -7,22 +7,22 @@ class SimpleCNN(nn.Module):
 
         # Feature Extractor
         self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(in_channels=3, out_channels=6, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(6),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(in_channels=6, out_channels=12, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(12),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(in_channels=12, out_channels=24, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(24),
             nn.ReLU()
         )
 
         # Classifier
         self.classifier = nn.Sequential(
-            nn.Linear(128 * 8 * 8, hidden_size),
+            nn.Linear(32 * 8 * 8, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
