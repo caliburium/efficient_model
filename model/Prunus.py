@@ -12,21 +12,21 @@ class Prunus(nn.Module):
         self.n_partition = n_partition
 
         self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(in_channels=3, out_channels=6, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(6),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(in_channels=6, out_channels=12, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(12),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(in_channels=12, out_channels=24, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(24),
             nn.ReLU()
         )
 
         self.pre_classifier = nn.Sequential(
-            nn.Linear(128 * 8 * 8, pre_classifier_out),
+            nn.Linear(24 * 8 * 8, pre_classifier_out),
             nn.BatchNorm1d(pre_classifier_out),
             nn.ReLU(),
         )
