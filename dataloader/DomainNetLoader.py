@@ -49,7 +49,7 @@ class DomainNetDataset(Dataset):
                 original_label = int(label_str)
 
                 if original_label in self.label_map:
-                    self.image_paths.append(self.domain_path / img_relative_path)
+                    self.image_paths.append(self.root_dir  / img_relative_path)
                     self.labels.append(self.label_map[original_label])
 
         if not self.image_paths:
