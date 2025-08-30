@@ -11,14 +11,14 @@ class SimpleCNN(nn.Module):
             nn.BatchNorm2d(8),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
+            # nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            # nn.BatchNorm2d(16),
+            # nn.ReLU(),
         )
 
         # Classifier
         self.classifier = nn.Sequential(
-            nn.Linear(16 * 16 * 16, hidden_size),
+            nn.Linear(8 * 16 * 16, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
