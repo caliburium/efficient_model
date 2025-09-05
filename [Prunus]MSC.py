@@ -17,7 +17,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=1000)
-    parser.add_argument('--pretrain_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
@@ -28,6 +27,7 @@ def main():
     parser.add_argument('--init_tau', type=float, default=2.0)
     parser.add_argument('--min_tau', type=float, default=0.1)
     parser.add_argument('--tau_decay', type=float, default=0.97)
+    parser.add_argument('--test_tau', type=float, default=1e-1)
 
     # Optimizer
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -55,6 +55,8 @@ def main():
                     + "_Batch:" + str(args.batch_size)
                     + "_tau:" + str(args.init_tau)
                     + "_PLayer:" + str(args.part_layer)
+                    + "_spe:" + str(args.reg_alpha)
+                    + "_div:" + str(args.reg_beta)
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -74,7 +76,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     # scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-    w_src, w_tgt = 1.0, 2.0
+    w_src, w_tgt = 2.0, 1.0
     domain_criterion = nn.CrossEntropyLoss(weight=torch.tensor([w_src, w_tgt], device=device))
     criterion = nn.CrossEntropyLoss()
 
@@ -106,7 +108,7 @@ def main():
             cifar_images, cifar_labels = cifar_data
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
             mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
-            svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
+            svhn_dlabels = torch.full((svhn_images.size(0),), 1, dtype=torch.long, device=device)
             cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
@@ -242,6 +244,7 @@ def main():
         )
         print(f'Specialization Loss {specialization_loss} | '
               f'Diversity Loss {diversity_loss} | '
+              f'Current Tau {tau} | '
         )
         print(
               f'MNIST Loss: {mnist_avg_loss:.4f} | '
@@ -282,6 +285,7 @@ def main():
             'Train/SVHN Domain Accuracy': svhn_domain_acc_epoch,
             'Train/CIFAR Domain Accuracy': cifar_domain_acc_epoch,
             'Train/Training Time': end_time - start_time,
+            'Train/Tau': tau
         }, step=epoch + 1)
 
         model.eval()
@@ -292,7 +296,7 @@ def main():
             for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
 
-                class_output_partitioned, domain_output, partition_idx, _ = model(images, alpha=0, tau=1e-5, inference=True)
+                class_output_partitioned, domain_output, partition_idx, switcher_logits = model(images, alpha=0, tau=args.test_tau, inference=True)
 
                 total += images.size(0)
                 label_correct += (torch.argmax(class_output_partitioned, dim=1) == labels).sum().item()
@@ -311,11 +315,13 @@ def main():
                 **{f"Test/{group} Partition {p} Ratio": partition_ratios[p].item() for p in range(args.num_partition)},
             }, step=epoch + 1)
 
-            print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}% | Partition Ratio: {partition_ratio_str}')
+            print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}% | Partition Ratio: {partition_ratio_str}'
+                  f"[{group} Test] Mean Switcher Logits: {torch.mean(switcher_logits, dim=0).cpu().detach().numpy()}"
+                  )
 
         with torch.no_grad():
             tester(mnist_loader_test, 'MNIST', 0)
-            tester(svhn_loader_test, 'SVHN', 0)
+            tester(svhn_loader_test, 'SVHN', 1)
             tester(cifar_loader_test, 'CIFAR', 1)
 
 
