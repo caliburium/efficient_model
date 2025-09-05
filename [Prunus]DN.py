@@ -21,8 +21,8 @@ def main():
     parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
-    parser.add_argument('--pre_classifier_out', type=int, default=4096)
-    parser.add_argument('--part_layer', type=int, default=4096)
+    parser.add_argument('--pre_classifier_out', type=int, default=128)
+    parser.add_argument('--part_layer', type=int, default=128)
 
     # tau scheduler
     parser.add_argument('--init_tau', type=float, default=2.0)

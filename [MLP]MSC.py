@@ -4,9 +4,28 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 from dataloader.data_loader import data_loader
-from model.SimpleCNN import SimpleCNN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+class MLP(nn.Module):
+    def __init__(self, num_classes=10, hidden_size=4096):
+        super(MLP, self).__init__()
+        # Classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(3 * 32 * 32, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, num_classes)
+        )
+
+    def forward(self, x):
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+
 
 
 def main():
@@ -33,7 +52,7 @@ def main():
 
     print("Data load complete, start training")
 
-    model = SimpleCNN(num_classes=10, hidden_size=args.hidden_size).to(device)
+    model = MLP(num_classes=10, hidden_size=args.hidden_size).to(device)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
