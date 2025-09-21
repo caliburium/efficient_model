@@ -5,7 +5,7 @@ from torch.nn.functional import gumbel_softmax
 
 
 class Prunus(nn.Module):
-    def __init__(self, num_classes=10, pre_classifier_out=1024, n_partition=2, part_layer=384, num_domains=2,
+    def __init__(self, num_classes=10, pre_classifier_out=128, n_partition=2, part_layer=128, num_domains=2,
                  device='cuda' if torch.cuda.is_available() else 'cpu'):
         super(Prunus, self).__init__()
         self.device = device
@@ -120,41 +120,29 @@ class Prunus(nn.Module):
 
         partition_switcher_output = self.partition_switcher(domain_penul)
 
-        # hard=True를 사용하면 gumbel_output이 one-hot 벡터가 되어 라우팅이 명확해집니다.
-        # Straight-Through Estimator 덕분에 그래디언트는 스위처로 잘 전달됩니다.
         gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
 
-        # 각 데이터 샘플이 어떤 파티션으로 갈지 결정합니다.
         partition_idx = torch.argmax(gumbel_output, dim=1)
 
-        # 최종 출력을 담을 빈 텐서를 생성합니다.
         class_output_partitioned = torch.zeros(feature.size(0), self.classifier[-1].out_features, device=self.device)
 
-        # for 루프를 배치 크기만큼 돌지 않고, 파티션 개수(n_partition)만큼만 돕니다.
         for p_i in range(self.n_partition):
-            # p_i번 파티션으로 할당된 데이터들의 인덱스를 찾습니다.
             indices = torch.where(partition_idx == p_i)[0]
 
-            # 이 파티션에 할당된 데이터가 없으면 건너뜁니다.
             if len(indices) == 0:
                 continue
 
-            # 해당 인덱스의 데이터(feature)들만 모읍니다.
             selected_features = feature[indices]
 
-            # 선택된 데이터들을 p_i번 파티션 네트워크에 '한 번에' 통과시킵니다.
             xx = selected_features
             for layer in self.partitioned_classifier[p_i]:
                 xx = layer(xx)
 
-            # 계산된 결과를 최종 출력 텐서의 원래 위치에 맞게 다시 채워 넣습니다.
             class_output_partitioned[indices] = xx
 
         if self.training:
             self.sync_classifier_with_subnetworks()
 
-        # 이 'class_output'은 sync 확인 및 디버깅용으로 남겨둘 수 있으나,
-        # 실제 학습에는 class_output_partitioned를 사용해야 합니다.
         class_output = self.classifier(feature)
 
         if inference:
