@@ -59,6 +59,7 @@ def main():
                     + "_div:" + str(args.reg_beta)
                     + "-alpha:" + str(args.lr_alpha)
                     + "-beta:" + str(args.lr_beta)
+                    + "_seperated"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -138,15 +139,20 @@ def main():
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
             cifar_label_loss = criterion(cifar_out_part, cifar_labels)
 
-            numbers_part_gumbel = torch.cat((mnist_part_gumbel, svhn_part_gumbel))
-            avg_prob_numbers = torch.mean(numbers_part_gumbel, dim=0)
+            # numbers_part_gumbel = torch.cat((mnist_part_gumbel, svhn_part_gumbel))
+            # avg_prob_numbers = torch.mean(numbers_part_gumbel, dim=0)
+            avg_prob_mnist = torch.mean(mnist_part_gumbel, dim=0)
+            avg_prob_svhn = torch.mean(svhn_part_gumbel, dim=0)
             avg_prob_cifar = torch.mean(cifar_part_gumbel, dim=0)
 
-            loss_specialization_numbers = -torch.sum(avg_prob_numbers * torch.log(avg_prob_numbers + 1e-8))
+            # loss_specialization_numbers = -torch.sum(avg_prob_numbers * torch.log(avg_prob_numbers + 1e-8))
+            loss_specialization_mnist = -torch.sum(avg_prob_mnist * torch.log(avg_prob_cifar + 1e-8))
+            loss_specialization_svhn = -torch.sum(avg_prob_svhn * torch.log(avg_prob_cifar + 1e-8))
             loss_specialization_cifar = -torch.sum(avg_prob_cifar * torch.log(avg_prob_cifar + 1e-8))
-            loss_specialization = loss_specialization_numbers + loss_specialization_cifar
+            # loss_specialization = loss_specialization_numbers + loss_specialization_cifar
+            loss_specialization = loss_specialization_mnist + loss_specialization_svhn + loss_specialization_cifar
 
-            all_probs = torch.cat((numbers_part_gumbel, cifar_part_gumbel), dim=0)
+            all_probs = torch.cat((mnist_part_gumbel, svhn_part_gumbel, cifar_part_gumbel), dim=0)
             avg_prob_global = torch.mean(all_probs, dim=0)
 
             loss_diversity = torch.sum(avg_prob_global * torch.log(avg_prob_global + 1e-8))
