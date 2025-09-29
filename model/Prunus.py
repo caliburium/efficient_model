@@ -121,8 +121,12 @@ class Prunus(nn.Module):
         partition_switcher_output = self.partition_switcher(domain_penul)
 
         gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
-
-        partition_idx = torch.argmax(gumbel_output, dim=1)
+        if inference:
+            partition_gumbel_or_probs = torch.softmax(partition_switcher_output, dim=1)
+            partition_idx = torch.argmax(partition_gumbel_or_probs, dim=1)
+        else:
+            partition_gumbel_or_probs = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
+            partition_idx = torch.argmax(partition_gumbel_or_probs, dim=1)
 
         class_output_partitioned = torch.zeros(feature.size(0), self.classifier[-1].out_features, device=self.device)
 
@@ -145,10 +149,7 @@ class Prunus(nn.Module):
 
         class_output = self.classifier(feature)
 
-        if inference:
-            return class_output_partitioned, domain_output, partition_idx, partition_switcher_output
-        else :
-            return class_output_partitioned, domain_output, partition_idx, gumbel_output
+        return class_output_partitioned, domain_output, partition_idx, partition_gumbel_or_probs
 
 
 def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0, switcher_weight=1.0):
