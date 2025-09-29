@@ -14,25 +14,25 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=1000)
+    parser.add_argument('--epoch', type=int, default=200)
     parser.add_argument('--batch_size', type=int, default=500)
-    parser.add_argument('--num_partition', type=int, default=3)
+    parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
-    parser.add_argument('--num_domains', type=int, default=3)
-    parser.add_argument('--pre_classifier_out', type=int, default=192)
-    parser.add_argument('--part_layer', type=int, default=192)
+    parser.add_argument('--num_domains', type=int, default=2)
+    parser.add_argument('--pre_classifier_out', type=int, default=1024)
+    parser.add_argument('--part_layer', type=int, default=1024)
 
     # tau scheduler
-    parser.add_argument('--init_tau', type=float, default=4.0)
+    parser.add_argument('--init_tau', type=float, default=3.0)
     parser.add_argument('--min_tau', type=float, default=0.1)
-    parser.add_argument('--tau_decay', type=float, default=0.97)
+    parser.add_argument('--tau_decay', type=float, default=0.99)
 
     # Optimizer
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     parser.add_argument('--lr_alpha', type=float, default=0.1)
-    parser.add_argument('--lr_beta', type=float, default=0.1)
+    parser.add_argument('--lr_beta', type=float, default=0.25)
 
     # parameter lr amplifier
     parser.add_argument('--prefc_lr', type=float, default=1.0)
@@ -41,7 +41,7 @@ def main():
     parser.add_argument('--switcher_lr', type=float, default=1.0)
 
     # regularization
-    parser.add_argument('--reg_alpha', type=float, default=0.2)
+    parser.add_argument('--reg_alpha', type=float, default=0.5)
     parser.add_argument('--reg_beta', type=float, default=1.0)
 
     args = parser.parse_args()
@@ -49,17 +49,13 @@ def main():
 
     # Initialize Weights and Biases
     wandb.init(entity="hails",
-               project="Efficient Model",
+               project="Efficient Model - Partition",
                config=args.__dict__,
-               name="[Prunus]MSC_Part:" + str(args.num_partition)
-                    + "_lr:" + str(args.lr)
+               name="[Prunus]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
-                    + "_tau:" + str(args.init_tau)
                     + "_PLayer:" + str(args.part_layer)
                     + "_spe:" + str(args.reg_alpha)
                     + "_div:" + str(args.reg_beta)
-                    + "-alpha:" + str(args.lr_alpha)
-                    + "-beta:" + str(args.lr_beta)
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -77,10 +73,9 @@ def main():
                    )
 
     def lr_lambda(progress):
-        mu_0 = args.lr
         alpha = args.lr_alpha
         beta = args.lr_beta
-        return mu_0 * (1 + alpha * progress) ** (-beta)
+        return (1 + alpha * progress) ** (-beta)
 
     tau_scheduler = GumbelTauScheduler(initial_tau=args.init_tau, min_tau=args.min_tau, decay_rate=args.tau_decay)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -119,8 +114,8 @@ def main():
             cifar_images, cifar_labels = cifar_data
             cifar_images, cifar_labels = cifar_images.to(device), cifar_labels.to(device)
             mnist_dlabels = torch.full((mnist_images.size(0),), 0, dtype=torch.long, device=device)
-            svhn_dlabels = torch.full((svhn_images.size(0),), 1, dtype=torch.long, device=device)
-            cifar_dlabels = torch.full((cifar_images.size(0),), 2, dtype=torch.long, device=device)
+            svhn_dlabels = torch.full((svhn_images.size(0),), 0, dtype=torch.long, device=device)
+            cifar_dlabels = torch.full((cifar_images.size(0),), 1, dtype=torch.long, device=device)
 
             optimizer.zero_grad()
 
@@ -298,6 +293,7 @@ def main():
             'Train/Learning Rate': optimizer.param_groups[0]['lr']
         }, step=epoch + 1)
 
+        tau_scheduler.step()
         model.eval()
 
         def tester(loader, group, domain_label_int, criterion, domain_criterion):
@@ -311,7 +307,7 @@ def main():
                 images, labels = images.to(device), labels.to(device)
                 dlabels = torch.full_like(labels, fill_value=domain_label_int)
 
-                class_output_partitioned, domain_output, partition_idx, _ = model(images, alpha=0, tau=tau, inference=True)
+                class_output_partitioned, domain_output, partition_idx, _ = model(images, alpha=0, inference=True)
 
                 # Loss 계산
                 label_loss = criterion(class_output_partitioned, labels)
@@ -358,7 +354,7 @@ def main():
                     else:
                         percentage = 0.0
 
-                    log_key = f"Partition/{group}/Label_{label_idx}_to_Partition_{part_idx}_%"
+                    log_key = f"Partition {group}/Partition:{part_idx}/Label:{label_idx}"
                     partition_log_data[log_key] = percentage
 
             wandb.log({**log_data, **partition_log_data}, step=epoch + 1)
@@ -370,11 +366,8 @@ def main():
 
         with torch.no_grad():
             tester(mnist_loader_test, 'MNIST', 0, criterion, domain_criterion)
-            tester(svhn_loader_test, 'SVHN', 1, criterion, domain_criterion)
-            tester(cifar_loader_test, 'CIFAR', 2, criterion, domain_criterion)
-
-        tau_scheduler.step()
-
+            tester(svhn_loader_test, 'SVHN', 0, criterion, domain_criterion)
+            tester(cifar_loader_test, 'CIFAR', 1, criterion, domain_criterion)
 
 if __name__ == '__main__':
     main()

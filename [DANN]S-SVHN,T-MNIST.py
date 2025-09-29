@@ -13,10 +13,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=100)
-    parser.add_argument('--batch_size', type=int, default=200)
+    parser.add_argument('--epoch', type=int, default=30)
+    parser.add_argument('--pre_epochs', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--hidden_size', type=int, default=4096)
+    parser.add_argument('--hidden_size', type=int, default=2048)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     parser.add_argument('--feature_weight', type=float, default=1.0)
@@ -25,6 +26,7 @@ def main():
 
     args = parser.parse_args()
     num_epochs = args.epoch
+    pre_epochs = args.pre_epochs
 
     # Initialize Weights and Biases
     wandb.init(entity="hails",
@@ -42,9 +44,47 @@ def main():
 
     model = DANN(hidden_size=args.hidden_size).to(device)
     param = dann_weights(model, args.lr, args.feature_weight, args.fc_weight, args.disc_weight)
-    optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    # optimizer = optim.SGD(param, lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.Adam(param, lr=args.lr, weight_decay=args.opt_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.CrossEntropyLoss()
+
+    for epoch in range(pre_epochs):
+        model.train()
+        i = 0
+
+        total_svhn_loss, total_svhn_correct = 0, 0
+        total_samples = 0
+
+        for svhn_images, svhn_labels in svhn_loader:
+            lambda_p = 0.0
+
+            svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
+
+            optimizer.zero_grad()
+
+            svhn_out, _ = model(svhn_images, alpha=lambda_p)
+            loss = criterion(svhn_out, svhn_labels)
+
+            loss.backward()
+            optimizer.step()
+
+            total_svhn_loss += loss.item()
+
+            svhn_correct = (torch.argmax(svhn_out, dim=1) == svhn_labels).sum().item()
+            total_svhn_correct += svhn_correct
+            total_samples += svhn_labels.size(0)
+
+            i += 1
+
+        svhn_acc_epoch = (total_svhn_correct / total_samples) * 100
+        svhn_loss_epoch = total_svhn_loss / total_samples
+
+        print(f"Pre Epoch {epoch + 1} | "
+              f"SVHN Acc: {svhn_acc_epoch:.2f}%, Loss: {svhn_loss_epoch:.6f}"
+              )
+
+    print("Pretraining done")
 
     for epoch in range(num_epochs):
         model.train()

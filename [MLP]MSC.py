@@ -10,7 +10,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class MLP(nn.Module):
     def __init__(self, num_classes=10, hidden_size=4096):
         super(MLP, self).__init__()
-        # Classifier
+
         self.classifier = nn.Sequential(
             nn.Linear(3 * 32 * 32, hidden_size),
             nn.BatchNorm1d(hidden_size),
@@ -32,16 +32,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=500)
-    parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--hidden_size', type=int, default=128)
+    parser.add_argument('--lr', type=float, default=1e-2)
+    parser.add_argument('--hidden_size', type=int, default=4096)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
+    parser.add_argument('--lr_alpha', type=float, default=0.1)
+    parser.add_argument('--lr_beta', type=float, default=0.25)
     args = parser.parse_args()
 
     num_epochs = args.epoch
     # Initialize Weights and Biases
     wandb.init(entity="hails",
-               project="Efficient Model",
+               project="Efficient Model - Partition",
                config=args.__dict__,
                name="[MLP]MSC_" + str(args.hidden_size) + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
                )
@@ -52,10 +54,16 @@ def main():
 
     print("Data load complete, start training")
 
+    def lr_lambda(progress):
+        alpha = args.lr_alpha
+        beta = args.lr_beta
+        return (1 + alpha * progress) ** (-beta)
+
     model = MLP(num_classes=10, hidden_size=args.hidden_size).to(device)
-    # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     for epoch in range(num_epochs):
         model.train()
@@ -105,6 +113,8 @@ def main():
 
             i += 1
 
+        scheduler.step()
+
         mnist_acc_epoch = total_mnist_correct / total_mnist_samples * 100
         svhn_acc_epoch = total_svhn_correct / total_svhn_samples * 100
         cifar10_acc_epoch = total_cifar10_correct / total_cifar10_samples * 100
@@ -150,7 +160,7 @@ def main():
                 correct += (torch.argmax(class_output, dim=1) == labels).sum().item()
 
             accuracy = correct / total * 100
-            wandb.log({f'Test/Label {group} Accuracy': accuracy}, step=epoch)
+            wandb.log({f'Test/{group} Label Accuracy': accuracy}, step=epoch)
             print(f'Test {group} | Label Acc: {accuracy:.3f}%')
 
         with torch.no_grad():

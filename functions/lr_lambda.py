@@ -1,6 +1,6 @@
 def lr_lambda(progress):
-    alpha = 1
-    beta = 0.75
+    alpha = 0.1
+    beta = 0.1
     return (1 + alpha * progress) ** (-beta)
 
 """
