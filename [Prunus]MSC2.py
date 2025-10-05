@@ -16,13 +16,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=500)
-    parser.add_argument('--num_partition', type=int, default=2)
+    parser.add_argument('--num_partition', type=int, default=3)
     parser.add_argument('--num_classes', type=int, default=10)
-    parser.add_argument('--pre_classifier_out', type=int, default=128)
-    parser.add_argument('--part_layer', type=int, default=128)
+    parser.add_argument('--num_domains', type=int, default=3)
+    parser.add_argument('--pre_classifier_out', type=int, default=96)
+    parser.add_argument('--part_layer', type=int, default=96)
 
     # tau scheduler
-    parser.add_argument('--init_tau', type=float, default=4.0)
+    parser.add_argument('--init_tau', type=float, default=5.0)
     parser.add_argument('--min_tau', type=float, default=0.1)
     parser.add_argument('--tau_decay', type=float, default=0.97)
 
@@ -41,7 +42,7 @@ def main():
 
     # regularization
     parser.add_argument('--reg_alpha', type=float, default=0.2)
-    parser.add_argument('--reg_beta', type=float, default=1.0)
+    parser.add_argument('--reg_beta', type=float, default=1.5)
 
     args = parser.parse_args()
     num_epochs = args.epoch
@@ -72,6 +73,7 @@ def main():
                    pre_classifier_out=args.pre_classifier_out,
                    n_partition=args.num_partition,
                    part_layer=args.part_layer,
+                   num_domains=args.num_domains,
                    device=device
                    )
 
@@ -362,7 +364,7 @@ def main():
                     else:
                         percentage = 0.0
 
-                    log_key = f"Partition/{group}/Label_{label_idx}_to_Partition_{part_idx}_%"
+                    log_key = f"Partition {group}/Partition:{part_idx}/Label:{label_idx}"
                     partition_log_data[log_key] = percentage
 
             wandb.log({**log_data, **partition_log_data}, step=epoch + 1)

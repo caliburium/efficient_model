@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from functions.GumbelTauScheduler import GumbelTauScheduler
-from model.Prunus import Prunus
+from model.Prunus import Prunus, prunus_weights
 from dataloader.data_loader import data_loader
 import numpy as np
 import wandb
@@ -19,8 +19,8 @@ def main():
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
     parser.add_argument('--num_domains', type=int, default=2)
-    parser.add_argument('--pre_classifier_out', type=int, default=1024)
-    parser.add_argument('--part_layer', type=int, default=1024)
+    parser.add_argument('--pre_classifier_out', type=int, default=4096)
+    parser.add_argument('--part_layer', type=int, default=4096)
 
     # tau scheduler
     parser.add_argument('--init_tau', type=float, default=3.0)
@@ -36,8 +36,8 @@ def main():
 
     # parameter lr amplifier
     parser.add_argument('--prefc_lr', type=float, default=1.0)
-    parser.add_argument('--fc_lr', type=float, default=1.0)
     parser.add_argument('--disc_lr', type=float, default=1.0)
+    parser.add_argument('--fc_lr', type=float, default=1.0)
     parser.add_argument('--switcher_lr', type=float, default=1.0)
 
     # regularization
@@ -77,8 +77,17 @@ def main():
         beta = args.lr_beta
         return (1 + alpha * progress) ** (-beta)
 
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(prunus_weights(
+        model,
+        lr=args.lr,
+        pre_weight=args.prefc_lr,
+        disc_weight=args.disc_lr,
+        fc_weight=args.fc_lr,
+        switcher_weight=args.switcher_lr
+    ), lr=args.lr)
+
     tau_scheduler = GumbelTauScheduler(initial_tau=args.init_tau, min_tau=args.min_tau, decay_rate=args.tau_decay)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # w_src, w_tgt = 2.0, 1.0
@@ -293,14 +302,93 @@ def main():
             'Train/Learning Rate': optimizer.param_groups[0]['lr']
         }, step=epoch + 1)
 
-        tau_scheduler.step()
         model.eval()
+
+        def evaluate(loader, group, domain_label_int, criterion, domain_criterion, tau):
+            label_correct, domain_correct, total = 0, 0, 0
+            total_label_loss, total_domain_loss = 0.0, 0.0
+            total_specialization_loss, total_diversity_loss = 0.0, 0.0
+            partition_counts = torch.zeros(args.num_partition, device=device)
+            label_partition_counts = torch.zeros(args.num_classes, args.num_partition, device=device)
+
+            all_part_gumbel = []
+
+            for images, labels in loader:
+                images, labels = images.to(device), labels.to(device)
+                dlabels = torch.full_like(labels, fill_value=domain_label_int)
+
+                class_output_partitioned, domain_output, partition_idx, part_gumbel = model(images, alpha=0, tau=tau, inference=True)
+
+                all_part_gumbel.append(part_gumbel)
+
+                label_loss = criterion(class_output_partitioned, labels)
+                domain_loss = domain_criterion(domain_output, dlabels)
+                total_label_loss += label_loss.item() * images.size(0)
+                total_domain_loss += domain_loss.item() * images.size(0)
+
+                total += images.size(0)
+                label_correct += (torch.argmax(class_output_partitioned, dim=1) == labels).sum().item()
+                domain_correct += (torch.argmax(domain_output, dim=1) == dlabels).sum().item()
+                partition_counts += torch.bincount(partition_idx, minlength=args.num_partition)
+
+                for i in range(labels.size(0)):
+                    label_idx = labels[i].item()
+                    part_idx = partition_idx[i].item()
+                    label_partition_counts[label_idx, part_idx] += 1
+
+            if all_part_gumbel:
+                all_probs = torch.cat(all_part_gumbel, dim=0)
+
+                avg_prob = torch.mean(all_probs, dim=0)
+                loss_specialization = -torch.sum(avg_prob * torch.log(avg_prob + 1e-8))
+
+                total_specialization_loss = loss_specialization.item()
+
+            avg_label_loss = total_label_loss / total
+            avg_domain_loss = total_domain_loss / total
+            label_acc = label_correct / total * 100
+            domain_acc = domain_correct / total * 100
+            partition_ratios = partition_counts / total * 100
+            partition_ratio_str = " | ".join(
+                [f"P{p}: {r:.2f}%" for p, r in enumerate(partition_ratios)])
+
+            log_data = {
+                f'Val/Label {group} Accuracy': label_acc,
+                f'Val/Domain {group} Accuracy': domain_acc,
+                f'Val/Label {group} Loss': avg_label_loss,
+                f'Val/Domain {group} Loss': avg_domain_loss,
+                **{f"Test/{group} Partition {p} Ratio": r.item() for p, r in enumerate(partition_ratios)},
+                f'Val/{group} Specialization Loss': total_specialization_loss,
+            }
+
+            partition_log_data = {}
+            total_counts_per_label = label_partition_counts.sum(dim=1)
+
+            for label_idx in range(args.num_classes):
+                total_for_label = total_counts_per_label[label_idx].item()
+                for part_idx in range(args.num_partition):
+                    count = label_partition_counts[label_idx, part_idx].item()
+
+                    if total_for_label > 0:
+                        percentage = (count / total_for_label) * 100
+                    else:
+                        percentage = 0.0
+
+                    log_key = f"Partition {group}/Partition:{part_idx}/Label:{label_idx}"
+                    partition_log_data[log_key] = percentage
+
+            wandb.log({**log_data, **partition_log_data}, step=epoch + 1)
+
+            print(f'Test {group} | Label Acc: {label_acc:.3f}% | Domain Acc: {domain_acc:.3f}% | '
+                  f'Label Loss: {avg_label_loss:.4f} | Domain Loss: {avg_domain_loss:.4f} | '
+                  f'Specialization Loss: {total_specialization_loss:.4f} | '  # Print the new loss
+                  f'Partition Ratio: {partition_ratio_str} | '
+                  )
 
         def tester(loader, group, domain_label_int, criterion, domain_criterion):
             label_correct, domain_correct, total = 0, 0, 0
-            total_label_loss, total_domain_loss = 0.0, 0.0  # Loss 기록을 위한 변수
+            total_label_loss, total_domain_loss = 0.0, 0.0
             partition_counts = torch.zeros(args.num_partition, device=device)
-            # 실제 Label 별로 어느 파티션으로 가는지 기록하기 위한 텐서 (num_classes x num_partition)
             label_partition_counts = torch.zeros(args.num_classes, args.num_partition, device=device)
 
             for images, labels in loader:
@@ -365,9 +453,14 @@ def main():
                   )
 
         with torch.no_grad():
+            evaluate(mnist_loader, 'MNIST', 0, criterion, domain_criterion, tau)
+            evaluate(svhn_loader, 'SVHN', 0, criterion, domain_criterion, tau)
+            evaluate(cifar_loader, 'CIFAR', 1, criterion, domain_criterion, tau)
             tester(mnist_loader_test, 'MNIST', 0, criterion, domain_criterion)
             tester(svhn_loader_test, 'SVHN', 0, criterion, domain_criterion)
             tester(cifar_loader_test, 'CIFAR', 1, criterion, domain_criterion)
+
+        tau_scheduler.step()
 
 if __name__ == '__main__':
     main()

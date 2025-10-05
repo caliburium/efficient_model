@@ -85,28 +85,28 @@ class Prunus(nn.Module):
                                 partitioned_classifier in self.partitioned_classifier]
 
         for i, linear_layer in enumerate(linear_layers):
-            w_ = linear_layer.weight
-            b_ = linear_layer.bias
-
             ws_ = []
             bs_ = []
-            for j, subnet_layer in enumerate(linear_layers_subnet):
-                if i == 1:
-                    with torch.no_grad():
-                        subnet_layer[i].bias.copy_(b_)
-                ws_.append(subnet_layer[i].weight)
-                bs_.append(subnet_layer[i].bias)
 
-            if i == 0:
-                ws_ = torch.cat(ws_, dim=0)
-                bs_ = torch.cat(bs_, dim=0)
-            elif i == 1:
-                ws_ = torch.cat(ws_, dim=1)
-                bs_ = b_
+            # Subnet weights/biases 수집
+            for j, subnet_layer in enumerate(linear_layers_subnet):
+                ws_.append(subnet_layer[i].weight.data)
+                if i == 1:
+                    bs_.append(subnet_layer[i].bias.data)
 
             with torch.no_grad():
-                linear_layer.weight = nn.Parameter(ws_.detach().clone())
-                linear_layer.bias = nn.Parameter(bs_.detach().clone())
+                if i == 0:
+                    ws_cat = torch.cat(ws_, dim=0)
+                    linear_layer.weight.copy_(ws_cat)
+
+                elif i == 1:
+                    ws_cat = torch.cat(ws_, dim=1)
+                    bs_cat = torch.sum(torch.stack(bs_), dim=0)
+
+                    linear_layer.weight.copy_(ws_cat)
+
+                    if len(bs_) > 0:
+                        linear_layer.bias.copy_(bs_[0])
 
     def forward(self, input_data, alpha=1.0, tau=0.1, inference=False):
         # feature = self.features(input_data)
@@ -120,7 +120,6 @@ class Prunus(nn.Module):
 
         partition_switcher_output = self.partition_switcher(domain_penul)
 
-        gumbel_output = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
         if inference:
             partition_gumbel_or_probs = torch.softmax(partition_switcher_output, dim=1)
             partition_idx = torch.argmax(partition_gumbel_or_probs, dim=1)
@@ -128,8 +127,9 @@ class Prunus(nn.Module):
             partition_gumbel_or_probs = gumbel_softmax(partition_switcher_output, tau=tau, hard=True)
             partition_idx = torch.argmax(partition_gumbel_or_probs, dim=1)
 
-        class_output_partitioned = torch.zeros(feature.size(0), self.classifier[-1].out_features, device=self.device)
-
+        # class_output_partitioned = torch.zeros(feature.size(0), self.classifier[-1].out_features, device=self.device)
+        class_output_partitioned = torch.zeros(feature.size(0), self.partitioned_classifier[0][-1].out_features,
+                                               device=self.device)
         for p_i in range(self.n_partition):
             indices = torch.where(partition_idx == p_i)[0]
 
@@ -147,18 +147,15 @@ class Prunus(nn.Module):
         if self.training:
             self.sync_classifier_with_subnetworks()
 
-        class_output = self.classifier(feature)
-
         return class_output_partitioned, domain_output, partition_idx, partition_gumbel_or_probs
 
 
-def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0, switcher_weight=1.0):
-
+def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0, switcher_weight=1.0): # fc_weight 추가
     return [
         {'params': model.features.parameters(), 'lr': lr},
         {'params': model.pre_classifier.parameters(), 'lr': lr * pre_weight},
-        {'params': model.classifier.parameters(), 'lr': lr * fc_weight},
         {'params': model.discriminator.parameters(), 'lr': lr * disc_weight},
         {'params': model.discriminator_fc.parameters(), 'lr': lr * disc_weight},
+        {'params': model.partitioned_classifier.parameters(), 'lr': lr * fc_weight},  # ✅ 이 부분이 핵심
         {'params': model.partition_switcher.parameters(), 'lr': lr * switcher_weight},
     ]
