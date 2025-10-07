@@ -23,9 +23,9 @@ def main():
     parser.add_argument('--part_layer', type=int, default=4096)
 
     # tau scheduler
-    parser.add_argument('--init_tau', type=float, default=3.0)
+    parser.add_argument('--init_tau', type=float, default=2.0)
     parser.add_argument('--min_tau', type=float, default=0.1)
-    parser.add_argument('--tau_decay', type=float, default=0.99)
+    parser.add_argument('--tau_decay', type=float, default=0.98)
 
     # Optimizer
     parser.add_argument('--lr', type=float, default=0.01)
@@ -38,11 +38,11 @@ def main():
     parser.add_argument('--prefc_lr', type=float, default=1.0)
     parser.add_argument('--disc_lr', type=float, default=1.0)
     parser.add_argument('--fc_lr', type=float, default=1.0)
-    parser.add_argument('--switcher_lr', type=float, default=1.0)
+    parser.add_argument('--switcher_lr', type=float, default=2.0)
 
     # regularization
     parser.add_argument('--reg_alpha', type=float, default=0.5)
-    parser.add_argument('--reg_beta', type=float, default=1.0)
+    parser.add_argument('--reg_beta', type=float, default=5.0)
 
     args = parser.parse_args()
     num_epochs = args.epoch
@@ -453,9 +453,9 @@ def main():
                   )
 
         with torch.no_grad():
-            evaluate(mnist_loader, 'MNIST', 0, criterion, domain_criterion, tau)
-            evaluate(svhn_loader, 'SVHN', 0, criterion, domain_criterion, tau)
-            evaluate(cifar_loader, 'CIFAR', 1, criterion, domain_criterion, tau)
+            # evaluate(mnist_loader, 'MNIST', 0, criterion, domain_criterion, tau)
+            # evaluate(svhn_loader, 'SVHN', 0, criterion, domain_criterion, tau)
+            # evaluate(cifar_loader, 'CIFAR', 1, criterion, domain_criterion, tau)
             tester(mnist_loader_test, 'MNIST', 0, criterion, domain_criterion)
             tester(svhn_loader_test, 'SVHN', 0, criterion, domain_criterion)
             tester(cifar_loader_test, 'CIFAR', 1, criterion, domain_criterion)
