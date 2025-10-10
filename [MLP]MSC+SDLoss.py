@@ -7,26 +7,12 @@ from dataloader.data_loader import data_loader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class SimpleCNN(nn.Module):
+class MLP(nn.Module):
     def __init__(self, num_classes=10, hidden_size=4096):
-        super(SimpleCNN, self).__init__()
-
-        self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-        )
+        super(MLP, self).__init__()
 
         self.classifier = nn.Sequential(
-            nn.Linear(64 * 8 * 8, hidden_size),
+            nn.Linear(3 * 32 * 32, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
@@ -36,7 +22,6 @@ class SimpleCNN(nn.Module):
         )
 
     def forward(self, x):
-        x = self.features(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x
@@ -47,7 +32,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=500)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-2)
     parser.add_argument('--hidden_size', type=int, default=4096)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
@@ -60,7 +45,7 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model - Partition",
                config=args.__dict__,
-               name="[CNN]MSC_" + str(args.hidden_size)
+               name="[MLP]MSC_" + str(args.hidden_size)
                     + "_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
                     + "_Adam"
@@ -77,7 +62,7 @@ def main():
         beta = args.lr_beta
         return (1 + alpha * progress) ** (-beta)
 
-    model = SimpleCNN(num_classes=10, hidden_size=args.hidden_size).to(device)
+    model = MLP(num_classes=10, hidden_size=args.hidden_size).to(device)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
@@ -105,7 +90,21 @@ def main():
             mnist_loss = criterion(mnist_outputs, mnist_labels)
             svhn_loss = criterion(svhn_outputs, svhn_labels)
             cifar10_loss = criterion(cifar10_outputs, cifar10_labels)
-            loss = mnist_loss + svhn_loss + cifar10_loss
+
+            mnist_probs = torch.softmax(mnist_outputs, dim=1)
+            svhn_probs = torch.softmax(svhn_outputs, dim=1)
+            cifar10_probs = torch.softmax(cifar10_outputs, dim=1)
+
+            num_probs = torch.cat((mnist_probs, svhn_probs), dim=0)
+            loss_specialization_numbers = -torch.sum(num_probs * torch.log(num_probs + 1e-8))
+            loss_specialization_cifar = -torch.sum(cifar10_probs * torch.log(cifar10_probs + 1e-8))
+            loss_specialization = loss_specialization_numbers + loss_specialization_cifar
+
+            all_probs = torch.cat((mnist_probs, svhn_probs, cifar10_probs), dim=0)
+            avg_prob_global = torch.mean(all_probs, dim=0)
+            loss_diversity = torch.sum(avg_prob_global * torch.log(avg_prob_global + 1e-8))
+
+            loss = mnist_loss + svhn_loss + cifar10_loss + (loss_specialization * 0.01) + (loss_diversity * 0.1)
 
             # Backward and optimize
             optimizer.zero_grad()

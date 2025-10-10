@@ -32,7 +32,7 @@ def get_label_partition_log_data(label_partition_counts, domain_name, num_classe
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=200)
+    parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--num_partition', type=int, default=2)
     parser.add_argument('--num_classes', type=int, default=10)
@@ -46,7 +46,7 @@ def main():
     parser.add_argument('--tau_decay', type=float, default=0.98)
 
     # Optimizer
-    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     parser.add_argument('--lr_alpha', type=float, default=0.1)
@@ -54,13 +54,13 @@ def main():
 
     # parameter lr amplifier
     parser.add_argument('--prefc_lr', type=float, default=1.0)
-    parser.add_argument('--disc_lr', type=float, default=0.5)
+    parser.add_argument('--disc_lr', type=float, default=2.0)
     parser.add_argument('--fc_lr', type=float, default=1.0)
     parser.add_argument('--switcher_lr', type=float, default=2.0)
 
     # regularization
-    parser.add_argument('--reg_alpha', type=float, default=0.5)
-    parser.add_argument('--reg_beta', type=float, default=2.0)
+    parser.add_argument('--reg_alpha', type=float, default=1.0)
+    parser.add_argument('--reg_beta', type=float, default=5.0)
 
     args = parser.parse_args()
     num_epochs = args.epoch
@@ -69,7 +69,7 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model - Partition",
                config=args.__dict__,
-               name="[Prunus]MSC_lr:" + str(args.lr)
+               name="[Prunus_CNN]MSC_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
                     + "_PLayer:" + str(args.part_layer)
                     + "_spe:" + str(args.reg_alpha)
@@ -103,7 +103,7 @@ def main():
         disc_weight=args.disc_lr,
         fc_weight=args.fc_lr,
         switcher_weight=args.switcher_lr
-    ), lr=args.lr)
+    ), lr=args.lr, weight_decay=args.opt_decay)
 
     tau_scheduler = GumbelTauScheduler(initial_tau=args.init_tau, min_tau=args.min_tau, decay_rate=args.tau_decay)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
@@ -191,7 +191,7 @@ def main():
 
             loss_diversity = torch.sum(avg_prob_global * torch.log(avg_prob_global + 1e-8))
 
-            label_loss = (mnist_label_loss + svhn_label_loss + cifar_label_loss
+            label_loss = (mnist_label_loss + svhn_label_loss + cifar_label_loss * 2
                           + args.reg_alpha * loss_specialization + args.reg_beta * loss_diversity)
 
             mnist_domain_loss = domain_criterion(mnist_domain_out, mnist_dlabels)
