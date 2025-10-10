@@ -12,15 +12,21 @@ class Prunus(nn.Module):
         self.n_partition = n_partition
 
         self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(8),
+            nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(16),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
         )
 
         self.pre_classifier = nn.Sequential(
-            nn.Linear(3 * 32 * 32, pre_classifier_out),
+            nn.Linear(64 * 8 * 8, pre_classifier_out),
             nn.LayerNorm(pre_classifier_out),
             nn.ReLU(),
         )
@@ -109,8 +115,8 @@ class Prunus(nn.Module):
                         linear_layer.bias.copy_(bs_[0])
 
     def forward(self, input_data, alpha=1.0, tau=0.1, inference=False):
-        # feature = self.features(input_data)
-        feature = input_data
+        feature = self.features(input_data)
+        # feature = input_data
         feature = feature.view(feature.size(0), -1)
         feature = self.pre_classifier(feature)
 
@@ -156,6 +162,6 @@ def prunus_weights(model, lr, pre_weight=1.0, fc_weight=1.0, disc_weight=1.0, sw
         {'params': model.pre_classifier.parameters(), 'lr': lr * pre_weight},
         {'params': model.discriminator.parameters(), 'lr': lr * disc_weight},
         {'params': model.discriminator_fc.parameters(), 'lr': lr * disc_weight},
-        {'params': model.partitioned_classifier.parameters(), 'lr': lr * fc_weight},  # ✅ 이 부분이 핵심
+        {'params': model.partitioned_classifier.parameters(), 'lr': lr * fc_weight},
         {'params': model.partition_switcher.parameters(), 'lr': lr * switcher_weight},
     ]

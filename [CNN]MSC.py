@@ -47,7 +47,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=500)
-    parser.add_argument('--lr', type=float, default=1e-2)
+    parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--hidden_size', type=int, default=4096)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
@@ -60,7 +60,10 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model - Partition",
                config=args.__dict__,
-               name="[CNN]MSC_" + str(args.hidden_size) + "_lr:" + str(args.lr) + "_Batch:" + str(args.batch_size)
+               name="[CNN]MSC_" + str(args.hidden_size)
+                    + "_lr:" + str(args.lr)
+                    + "_Batch:" + str(args.batch_size)
+                    + "_Adam"
                )
 
     mnist_loader, mnist_loader_test = data_loader('MNIST', args.batch_size)
@@ -75,8 +78,8 @@ def main():
         return (1 + alpha * progress) ** (-beta)
 
     model = SimpleCNN(num_classes=10, hidden_size=args.hidden_size).to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
-    # optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
@@ -175,7 +178,7 @@ def main():
                 correct += (torch.argmax(class_output, dim=1) == labels).sum().item()
 
             accuracy = correct / total * 100
-            wandb.log({f'Test/{group} Label Accuracy': accuracy}, step=epoch)
+            wandb.log({f'Test/Label {group} Accuracy': accuracy}, step=epoch)
             print(f'Test {group} | Label Acc: {accuracy:.3f}%')
 
         with torch.no_grad():

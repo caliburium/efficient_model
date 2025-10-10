@@ -11,6 +11,24 @@ import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def get_label_partition_log_data(label_partition_counts, domain_name, num_classes, num_partition, prefix):
+    log_data = {}
+    total_counts_per_label = label_partition_counts.sum(dim=1)
+
+    for label_idx in range(num_classes):
+        total_for_label = total_counts_per_label[label_idx].item()
+        for part_idx in range(num_partition):
+            count = label_partition_counts[label_idx, part_idx].item()
+
+            if total_for_label > 0:
+                percentage = (count / total_for_label) * 100
+            else:
+                percentage = 0.0
+
+            log_key = f"Partition {domain_name} {prefix}/Partition:{part_idx}/Label:{label_idx}"
+            log_data[log_key] = percentage
+    return log_data
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -28,7 +46,7 @@ def main():
     parser.add_argument('--tau_decay', type=float, default=0.98)
 
     # Optimizer
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
     parser.add_argument('--lr_alpha', type=float, default=0.1)
@@ -36,13 +54,13 @@ def main():
 
     # parameter lr amplifier
     parser.add_argument('--prefc_lr', type=float, default=1.0)
-    parser.add_argument('--disc_lr', type=float, default=1.0)
+    parser.add_argument('--disc_lr', type=float, default=0.5)
     parser.add_argument('--fc_lr', type=float, default=1.0)
     parser.add_argument('--switcher_lr', type=float, default=2.0)
 
     # regularization
     parser.add_argument('--reg_alpha', type=float, default=0.5)
-    parser.add_argument('--reg_beta', type=float, default=5.0)
+    parser.add_argument('--reg_beta', type=float, default=2.0)
 
     args = parser.parse_args()
     num_epochs = args.epoch
@@ -112,6 +130,10 @@ def main():
         cifar_partition_counts = torch.zeros(args.num_partition, device=device)
         total_samples = 0
 
+        mnist_label_partition_counts = torch.zeros(args.num_classes, args.num_partition, device=device)
+        svhn_label_partition_counts = torch.zeros(args.num_classes, args.num_partition, device=device)
+        cifar_label_partition_counts = torch.zeros(args.num_classes, args.num_partition, device=device)
+
         for i, (mnist_data, svhn_data, cifar_data) in enumerate(zip(mnist_loader, svhn_loader, cifar_loader)):
             p = epoch / num_epochs
             lambda_p = 2. / (1. + np.exp(-10 * p)) - 1
@@ -128,17 +150,29 @@ def main():
 
             optimizer.zero_grad()
 
-            mnist_out_part, mnist_domain_out, mnist_part_idx, mnist_part_gumbel = model(mnist_images, alpha=lambda_p, tau=tau, inference=False)
-            svhn_out_part, svhn_domain_out, svhn_part_idx, svhn_part_gumbel = model(svhn_images, alpha=lambda_p, tau=tau, inference=False)
-            cifar_out_part, cifar_domain_out, cifar_part_idx, cifar_part_gumbel = model(cifar_images, alpha=lambda_p, tau=tau, inference=False)
+            mnist_out_part, mnist_domain_out, mnist_part_idx, mnist_part_gumbel = model(mnist_images, alpha=lambda_p,
+                                                                                        tau=tau, inference=False)
+            svhn_out_part, svhn_domain_out, svhn_part_idx, svhn_part_gumbel = model(svhn_images, alpha=lambda_p,
+                                                                                    tau=tau, inference=False)
+            cifar_out_part, cifar_domain_out, cifar_part_idx, cifar_part_gumbel = model(cifar_images, alpha=lambda_p,
+                                                                                        tau=tau, inference=False)
 
             if i % 1 == 0:
                 print(f"--- [Epoch {epoch + 1}, Batch {i}] Partition Stats ---")
                 mnist_counts = torch.bincount(mnist_part_idx, minlength=args.num_partition)
                 svhn_counts = torch.bincount(svhn_part_idx, minlength=args.num_partition)
                 cifar_counts = torch.bincount(cifar_part_idx, minlength=args.num_partition)
-                print(f"MNIST : {mnist_counts.cpu().numpy()} / SVHN  : {svhn_counts.cpu().numpy()} / CIFAR : {cifar_counts.cpu().numpy()}")
-                print(f"Switcher Weight Mean: {model.partition_switcher.weight.data.mean():.8f}, Bias Mean: {model.partition_switcher.bias.data.mean():.8f}")
+                print(
+                    f"MNIST : {mnist_counts.cpu().numpy()} / SVHN  : {svhn_counts.cpu().numpy()} / CIFAR : {cifar_counts.cpu().numpy()}")
+                print(
+                    f"Switcher Weight Mean: {model.partition_switcher.weight.data.mean():.8f}, Bias Mean: {model.partition_switcher.bias.data.mean():.8f}")
+
+            for l_idx in range(mnist_labels.size(0)):
+                mnist_label_partition_counts[mnist_labels[l_idx].item(), mnist_part_idx[l_idx].item()] += 1
+            for l_idx in range(svhn_labels.size(0)):
+                svhn_label_partition_counts[svhn_labels[l_idx].item(), svhn_part_idx[l_idx].item()] += 1
+            for l_idx in range(cifar_labels.size(0)):
+                cifar_label_partition_counts[cifar_labels[l_idx].item(), cifar_part_idx[l_idx].item()] += 1
 
             mnist_label_loss = criterion(mnist_out_part, mnist_labels)
             svhn_label_loss = criterion(svhn_out_part, svhn_labels)
@@ -156,7 +190,6 @@ def main():
             avg_prob_global = torch.mean(all_probs, dim=0)
 
             loss_diversity = torch.sum(avg_prob_global * torch.log(avg_prob_global + 1e-8))
-
 
             label_loss = (mnist_label_loss + svhn_label_loss + cifar_label_loss
                           + args.reg_alpha * loss_specialization + args.reg_beta * loss_diversity)
@@ -213,6 +246,16 @@ def main():
 
         scheduler.step()
 
+        mnist_train_partition_log = get_label_partition_log_data(
+            mnist_label_partition_counts, 'MNIST', args.num_classes, args.num_partition, prefix="Train"
+        )
+        svhn_train_partition_log = get_label_partition_log_data(
+            svhn_label_partition_counts, 'SVHN', args.num_classes, args.num_partition, prefix="Train"
+        )
+        cifar_train_partition_log = get_label_partition_log_data(
+            cifar_label_partition_counts, 'CIFAR', args.num_classes, args.num_partition, prefix="Train"
+        )
+
         mnist_partition_ratios = mnist_partition_counts / total_samples * 100
         svhn_partition_ratios = svhn_partition_counts / total_samples * 100
         cifar_partition_ratios = cifar_partition_counts / total_samples * 100
@@ -254,27 +297,27 @@ def main():
               f'Domain Loss: {domain_avg_loss:.4f} | '
               f'Total Loss: {label_avg_loss + domain_avg_loss:.4f} | '
               f'Time: {end_time - start_time:.2f} sec | '
-        )
+              )
         print(f'Specialization Loss {specialization_loss} | '
               f'Diversity Loss {diversity_loss} | '
               f'Current Tau {tau} | '
-        )
-        print(
-              f'MNIST Loss: {mnist_avg_loss:.4f} | '
-              f'SVHN Loss: {svhn_avg_loss:.4f} | '
-              f'CIFAR Loss: {cifar_avg_loss:.4f} | '
-              f'MNIST Domain Loss: {mnist_domain_avg_loss:.4f} | '
-              f'SVHN Domain Loss: {svhn_domain_avg_loss:.4f} | '
-              f'CIFAR Domain Loss: {cifar_domain_avg_loss:.4f} | '
-        )
-        print(
-              f'MNIST Acc: {mnist_acc_epoch:.3f}% | '
-              f'SVHN Acc: {svhn_acc_epoch:.3f}% | '
-              f'CIFAR Acc: {cifar_acc_epoch:.3f}% | '
-              f'MNIST Domain Acc: {mnist_domain_acc_epoch:.3f}% | '
-              f'SVHN Domain Acc: {svhn_domain_acc_epoch:.3f}% | '
-              f'CIFAR Domain Acc: {cifar_domain_acc_epoch:.3f}% |'
               )
+        print(
+            f'MNIST Loss: {mnist_avg_loss:.4f} | '
+            f'SVHN Loss: {svhn_avg_loss:.4f} | '
+            f'CIFAR Loss: {cifar_avg_loss:.4f} | '
+            f'MNIST Domain Loss: {mnist_domain_avg_loss:.4f} | '
+            f'SVHN Domain Loss: {svhn_domain_avg_loss:.4f} | '
+            f'CIFAR Domain Loss: {cifar_domain_avg_loss:.4f} | '
+        )
+        print(
+            f'MNIST Acc: {mnist_acc_epoch:.3f}% | '
+            f'SVHN Acc: {svhn_acc_epoch:.3f}% | '
+            f'CIFAR Acc: {cifar_acc_epoch:.3f}% | '
+            f'MNIST Domain Acc: {mnist_domain_acc_epoch:.3f}% | '
+            f'SVHN Domain Acc: {svhn_domain_acc_epoch:.3f}% | '
+            f'CIFAR Domain Acc: {cifar_domain_acc_epoch:.3f}% |'
+        )
 
         wandb.log({
             **{f"Train/MNIST Partition {p} Ratio": mnist_partition_ratios[p].item() for p in range(args.num_partition)},
@@ -285,7 +328,7 @@ def main():
             'Train/CIFAR Label Loss': cifar_avg_loss,
             'Train/Label Loss': label_avg_loss,
             'Train/Specialization Loss': specialization_loss,
-            'Train/Diversity Loss' : diversity_loss,
+            'Train/Diversity Loss': diversity_loss,
             'Train/Domain MNIST Loss': mnist_domain_avg_loss,
             'Train/Domain SVHN Loss': svhn_domain_avg_loss,
             'Train/Domain CIFAR Loss': cifar_domain_avg_loss,
@@ -299,7 +342,10 @@ def main():
             'Train/CIFAR Domain Accuracy': cifar_domain_acc_epoch,
             'Train/Training Time': end_time - start_time,
             'Train/Tau': tau,
-            'Train/Learning Rate': optimizer.param_groups[0]['lr']
+            'Train/Learning Rate': optimizer.param_groups[0]['lr'],
+            **mnist_train_partition_log,
+            **svhn_train_partition_log,
+            **cifar_train_partition_log,
         }, step=epoch + 1)
 
         model.eval()
@@ -317,7 +363,8 @@ def main():
                 images, labels = images.to(device), labels.to(device)
                 dlabels = torch.full_like(labels, fill_value=domain_label_int)
 
-                class_output_partitioned, domain_output, partition_idx, part_gumbel = model(images, alpha=0, tau=tau, inference=True)
+                class_output_partitioned, domain_output, partition_idx, part_gumbel = model(images, alpha=0, tau=tau,
+                                                                                            inference=True)
 
                 all_part_gumbel.append(part_gumbel)
 
@@ -374,7 +421,7 @@ def main():
                     else:
                         percentage = 0.0
 
-                    log_key = f"Partition {group}/Partition:{part_idx}/Label:{label_idx}"
+                    log_key = f"Partition {group} Eval/Partition:{part_idx}/Label:{label_idx}"
                     partition_log_data[log_key] = percentage
 
             wandb.log({**log_data, **partition_log_data}, step=epoch + 1)
@@ -397,7 +444,6 @@ def main():
 
                 class_output_partitioned, domain_output, partition_idx, _ = model(images, alpha=0, inference=True)
 
-                # Loss 계산
                 label_loss = criterion(class_output_partitioned, labels)
                 domain_loss = domain_criterion(domain_output, dlabels)
                 total_label_loss += label_loss.item() * images.size(0)
@@ -442,7 +488,7 @@ def main():
                     else:
                         percentage = 0.0
 
-                    log_key = f"Partition {group}/Partition:{part_idx}/Label:{label_idx}"
+                    log_key = f"Partition {group} Test/Partition:{part_idx}/Label:{label_idx}"
                     partition_log_data[log_key] = percentage
 
             wandb.log({**log_data, **partition_log_data}, step=epoch + 1)
@@ -461,6 +507,7 @@ def main():
             tester(cifar_loader_test, 'CIFAR', 1, criterion, domain_criterion)
 
         tau_scheduler.step()
+
 
 if __name__ == '__main__':
     main()

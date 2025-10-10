@@ -7,12 +7,27 @@ from dataloader.data_loader import data_loader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class MLP(nn.Module):
+
+class SimpleCNN(nn.Module):
     def __init__(self, num_classes=10, hidden_size=4096):
-        super(MLP, self).__init__()
+        super(SimpleCNN, self).__init__()
+
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+        )
 
         self.classifier = nn.Sequential(
-            nn.Linear(3 * 32 * 32, hidden_size),
+            nn.Linear(64 * 8 * 8, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
@@ -22,17 +37,17 @@ class MLP(nn.Module):
         )
 
     def forward(self, x):
+        x = self.features(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x
-
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=500)
-    parser.add_argument('--lr', type=float, default=1e-2)
+    parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--hidden_size', type=int, default=4096)
     parser.add_argument('--momentum', type=float, default=0.90)
     parser.add_argument('--opt_decay', type=float, default=1e-6)
@@ -45,7 +60,7 @@ def main():
     wandb.init(entity="hails",
                project="Efficient Model - Partition",
                config=args.__dict__,
-               name="[MLP]MSC_" + str(args.hidden_size)
+               name="[CNN]MSC20_" + str(args.hidden_size)
                     + "_lr:" + str(args.lr)
                     + "_Batch:" + str(args.batch_size)
                     + "_Adam"
@@ -62,7 +77,7 @@ def main():
         beta = args.lr_beta
         return (1 + alpha * progress) ** (-beta)
 
-    model = MLP(num_classes=10, hidden_size=args.hidden_size).to(device)
+    model = SimpleCNN(num_classes=20, hidden_size=args.hidden_size).to(device)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.opt_decay)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
@@ -81,7 +96,9 @@ def main():
             svhn_images, svhn_labels = svhn_data
             svhn_images, svhn_labels = svhn_images.to(device), svhn_labels.to(device)
             cifar10_images, cifar10_labels = cifar10_data
-            cifar10_images, cifar10_labels = cifar10_images.to(device), cifar10_labels.to(device)
+            cifar10_images = cifar10_images.to(device)
+
+            cifar10_labels = (cifar10_labels + 10).to(device)
 
             mnist_outputs = model(mnist_images)
             svhn_outputs = model(svhn_images)
@@ -138,7 +155,7 @@ def main():
         print(
             f'MNIST Acc: {mnist_acc_epoch:.3f}% | '
             f'SVHN Acc: {svhn_acc_epoch:.3f}% | '
-            f'CIFAR Acc: {cifar10_acc_epoch:.3f}% | '
+            f'CIFAR-10 Acc: {cifar10_acc_epoch:.3f}% | '
         )
 
         wandb.log({
@@ -158,6 +175,9 @@ def main():
             for images, labels in loader:
                 images, labels = images.to(device), labels.to(device)
 
+                if group == 'CIFAR':
+                    labels = labels + 10
+
                 class_output = model(images)
                 total += labels.size(0)
                 correct += (torch.argmax(class_output, dim=1) == labels).sum().item()
@@ -170,6 +190,7 @@ def main():
             tester(mnist_loader_test, 'MNIST')
             tester(svhn_loader_test, 'SVHN')
             tester(cifar10_loader_test, 'CIFAR')
+
 
 if __name__ == '__main__':
     main()
